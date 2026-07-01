@@ -185,7 +185,7 @@ def _search_workflows(db: Session, query: str, limit: int = 5):
 def _workflow_scores(query: str, workflows, min_score: float = 0.0):
     if not workflows:
         return []
-    texts = [f"{wf.name} {wf.description or ''} {' '.join(step.description for step in wf.steps)}" for wf in workflows]
+    texts = [f"{wf.name} {wf.description or ''} {' '.join(step.description for step in wf.workflow_steps)}" for wf in workflows]
     scores = _hybrid_scores(query, texts)
     scored = []
     for wf, score, text in zip(workflows, scores, texts):
@@ -203,7 +203,7 @@ def _workflow_scores(query: str, workflows, min_score: float = 0.0):
                 "text": text,
                 "citation": {
                     "workflow": wf.name,
-                    "steps": len(wf.steps),
+                    "steps": len(wf.workflow_steps),
                 },
             }
         )
@@ -337,10 +337,11 @@ def retrieve(query: str, top_k: int = 5):
             wf = item["workflow"]
             workflow_results.append(
                 {
+                    "workflow": wf,
                     "type": "workflow",
                     "title": wf.name,
                     "description": wf.description,
-                    "steps": [step.description for step in wf.steps],
+                    "steps": [step.description for step in wf.workflow_steps],
                     "score": item["score"],
                 }
             )

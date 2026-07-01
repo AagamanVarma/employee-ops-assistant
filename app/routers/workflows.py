@@ -45,9 +45,21 @@ def create_workflow(request: Request, name: str = Form(...), description: str = 
     if not get_current_admin(request):
         return RedirectResponse(url="/admin/login", status_code=303)
     steps_list = _build_steps(steps)
-    wf = models.Workflow(name=name, description=description)
-    db.add(wf)
-    db.commit()
+    workflow_name = name.strip()
+    wf = db.query(models.Workflow).filter(models.Workflow.name == workflow_name).first()
+    if wf:
+        wf.description = description
+        wf.steps = "\n".join(steps_list)
+        wf.workflow_steps.clear()
+        db.flush()
+    else:
+        wf = models.Workflow(
+            name=workflow_name,
+            description=description,
+            steps="\n".join(steps_list),
+        )
+        db.add(wf)
+        db.flush()
 
     for index, step_text in enumerate(steps_list, start=1):
         wf_step = models.WorkflowStep(
@@ -66,7 +78,7 @@ def view_workflow(workflow_id: int, request: Request, db: Session = Depends(get_
     wf = db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
     if not wf:
         raise HTTPException(status_code=404, detail="Workflow not found")
-    steps = [step.description for step in sorted(wf.steps, key=lambda s: s.step_order)]
+    steps = [step.description for step in sorted(wf.workflow_steps, key=lambda s: s.step_order)]
     return templates.TemplateResponse(
         request,
         "workflows/view.html",

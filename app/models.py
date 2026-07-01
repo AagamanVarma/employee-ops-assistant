@@ -10,7 +10,8 @@ class Workflow(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), unique=True, index=True, nullable=False)
     description = Column(Text, nullable=True)
-    steps = relationship(
+    steps = Column(Text, nullable=False, default="")
+    workflow_steps = relationship(
         "WorkflowStep",
         back_populates="workflow",
         cascade="all, delete-orphan",
@@ -23,10 +24,10 @@ class WorkflowStep(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     workflow_id = Column(Integer, ForeignKey("workflows.id"), nullable=False)
-    step_order = Column(Integer, nullable=False)
+    step_order = Column("order", Integer, nullable=False)
     description = Column(Text, nullable=False)
 
-    workflow = relationship("Workflow", back_populates="steps")
+    workflow = relationship("Workflow", back_populates="workflow_steps")
 
 
 class Admin(Base):
