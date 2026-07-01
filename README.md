@@ -8,13 +8,17 @@ Current state:
 - Admin login
 - Workflow CRUD
 - PDF document upload
+- Visual upload progress UI
+- Background document processing
 - Local document chunking and retrieval
+- Local retrieval/debug tooling
 - Ask page for policy/workflow search
 
 Important:
 - No Gemini/OpenAI response generation yet
-- Retrieval is local and should be tuned before adding generation
-- Only confident matches are shown; otherwise the app tells the user to contact HR
+- Retrieval is local and must stay gated until confidence is strong enough
+- Only highly relevant chunks/workflows should be shown
+- If the top score is not strong enough, the app should tell the user to contact HR for clarification
 - Policy and workflow matches show references
 
 Run locally:
@@ -50,12 +54,6 @@ Create the database tables:
 python -m app.init_db
 ```
 
-Create the database tables once before running the app:
-
-```bash
-python -m app.init_db
-```
-
 Run the server locally:
 
 ```bash
@@ -72,4 +70,7 @@ Demo flow:
 - Ask a policy question
 - If the match is not confident, the app will say to contact HR
 
-Next step after retrieval is strong: add grounded Gemini/OpenAI summarization.
+Next steps:
+1. Add a strict retrieval confidence gate so only strong matches are shown.
+2. Tune chunking and ranking further to keep only highly relevant chunks/workflows.
+3. Add grounded Gemini/OpenAI summarization after retrieval is stable.

@@ -1,14 +1,25 @@
 {% extends "base.html" %}
 {% block content %}
-  <h2>{{ workflow.name }}</h2>
-  <p>{{ workflow.description }}</p>
-  <ol>
-    {% for s in steps %}
-      <li>{{ s }}</li>
-    {% endfor %}
-  </ol>
-  <form method="post" action="/workflows/{{ workflow.id }}/delete">
+<div class="panel p-4 p-lg-5">
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
+    <div>
+      <span class="badge soft-badge rounded-pill mb-3">Workflow detail</span>
+      <h2 class="mb-2">{{ workflow.name }}</h2>
+      <p class="text-muted mb-0">{{ workflow.description or 'No description provided.' }}</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="/workflows">Back to workflows</a>
+  </div>
+  <div class="feature-tile p-4 mb-4">
+    <ol class="mb-0">
+      {% for s in steps %}
+        <li class="mb-2">{{ s }}</li>
+      {% endfor %}
+    </ol>
+  </div>
+  {% if is_admin %}
+  <form method="post" action="/workflows/{{ workflow.id }}/delete" onsubmit="return confirm('Delete workflow?');">
     <button class="btn btn-danger">Delete</button>
-    <a class="btn btn-secondary" href="/workflows">Back</a>
   </form>
+  {% endif %}
+</div>
 {% endblock %}

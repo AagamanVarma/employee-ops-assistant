@@ -27,9 +27,8 @@ def ask_form(request: Request):
 @router.post("/ask")
 def ask_search(request: Request, query: str = Form(...)):
     results = retrieve(query, top_k=5)
-    found_policy = len(results.get("chunks", [])) > 0
-    found_workflows = len(results.get("workflows", [])) > 0
-    show_fallback = not found_policy and not found_workflows
+    confidence = results.get("confidence", {})
+    show_fallback = not confidence.get("is_confident", False)
     return templates.TemplateResponse(
         request,
         "ask/results.html",
@@ -41,5 +40,6 @@ def ask_search(request: Request, query: str = Form(...)):
             "show_fallback": show_fallback,
             "debug": results.get("debug", {}),
             "contact_hr": show_fallback,
+            "fallback_message": confidence.get("fallback_message") or "Please contact HR for clarification.",
         },
     )

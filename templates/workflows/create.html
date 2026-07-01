@@ -1,19 +1,26 @@
 {% extends "base.html" %}
 {% block content %}
-  <h2>Create Workflow</h2>
+<div class="panel p-4 p-lg-5">
+  <span class="badge soft-badge rounded-pill mb-3">Admin only</span>
+  <h2 class="mb-2">Create Workflow</h2>
+  <p class="text-muted mb-4">Use this form to add a new workflow for employee reference.</p>
   <form method="post" action="/workflows/create">
     <div class="mb-3">
       <label class="form-label">Name</label>
-      <input class="form-control" name="name" required />
+      <input class="form-control form-control-lg" name="name" required />
     </div>
     <div class="mb-3">
       <label class="form-label">Description</label>
-      <textarea class="form-control" name="description"></textarea>
+      <textarea class="form-control" name="description" rows="3"></textarea>
     </div>
     <div class="mb-3">
       <label class="form-label">Steps (one per line)</label>
-      <textarea class="form-control" name="steps" rows="6" required></textarea>
+      <textarea class="form-control" name="steps" rows="8" required></textarea>
     </div>
-    <button class="btn btn-primary">Create</button>
+    <div class="d-flex gap-2 flex-wrap">
+      <button class="btn btn-primary btn-lg">Create</button>
+      <a class="btn btn-outline-secondary btn-lg" href="/workflows">Cancel</a>
+    </div>
   </form>
+</div>
 {% endblock %}

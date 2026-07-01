@@ -1,22 +1,36 @@
 {% extends "base.html" %}
 {% block content %}
-  <div class="d-flex justify-content-between align-items-center mb-3">
-    <h2>Workflows</h2>
+<div class="panel p-4 p-lg-5">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+    <div>
+      <span class="badge soft-badge rounded-pill mb-3">Workflow library</span>
+      <h2 class="mb-2">Workflows</h2>
+      <p class="text-muted mb-0">Employees can browse workflows. Only admins can create or delete them.</p>
+    </div>
+    {% if is_admin %}
     <a class="btn btn-success" href="/workflows/create">Create Workflow</a>
+    {% else %}
+    <a class="btn btn-outline-secondary" href="/admin/login">Admin login to create</a>
+    {% endif %}
   </div>
-  <ul class="list-group">
+  <div class="row g-3">
     {% for wf in workflows %}
-      <li class="list-group-item d-flex justify-content-between align-items-center">
-        <div>
-          <strong>{{ wf.name }}</strong><br>
-          <small>{{ wf.description or '' }}</small>
-        </div>
-        <div>
+    <div class="col-lg-6">
+      <div class="feature-tile p-4 h-100">
+        <div class="d-flex justify-content-between align-items-start gap-3">
+          <div>
+            <div class="fw-semibold fs-5">{{ wf.name }}</div>
+            <div class="text-muted mt-1">{{ wf.description or 'No description provided.' }}</div>
+          </div>
           <a class="btn btn-sm btn-primary" href="/workflows/{{ wf.id }}">View</a>
         </div>
-      </li>
+      </div>
+    </div>
     {% else %}
-      <li class="list-group-item">No workflows yet.</li>
+    <div class="col-12">
+      <div class="feature-tile p-4 text-muted">No workflows yet.</div>
+    </div>
     {% endfor %}
-  </ul>
+  </div>
+</div>
 {% endblock %}

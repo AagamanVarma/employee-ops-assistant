@@ -21,7 +21,7 @@
       </div>
     </div>
     {% if show_fallback %}
-    <div class="alert alert-warning">No reliable policy match found. Please contact HR.</div>
+    <div class="alert alert-warning">{{ fallback_message }}</div>
     {% endif %}
     {% if results and results.chunks %}
     <div class="mb-4">
@@ -72,6 +72,15 @@
       <summary class="card-header fw-semibold">Retrieval debug</summary>
       <div class="card-body">
         <p class="small text-muted mb-2">This section is for development and tuning only.</p>
+        <div class="mb-3">
+          <div class="fw-semibold mb-2">Confidence</div>
+          <div class="small text-muted">Threshold: {{ debug.threshold }} | Top score: {{ debug.top_score }}</div>
+          {% if debug.fallback_reason %}
+          <div class="small text-danger mt-1">Fallback triggered: {{ debug.fallback_reason }}</div>
+          {% else %}
+          <div class="small text-success mt-1">Retrieval passed the confidence gate.</div>
+          {% endif %}
+        </div>
         <div class="mb-3">
           <div class="fw-semibold mb-2">Query</div>
           <div class="text-muted">{{ debug.query }}</div>

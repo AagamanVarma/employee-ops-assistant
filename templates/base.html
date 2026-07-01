@@ -12,6 +12,7 @@
         --ink: #1f2937;
         --muted: #6b7280;
         --accent: #0f766e;
+        --accent-strong: #115e59;
       }
       body {
         background: radial-gradient(circle at top, #fff9f0 0, var(--bg) 45%, #eef6f5 100%);
@@ -47,6 +48,25 @@
         border-radius: 1rem;
         background: rgba(255, 255, 255, 0.75);
       }
+      .status-pill {
+        border: 1px solid rgba(15, 118, 110, 0.16);
+        background: rgba(15, 118, 110, 0.08);
+        color: var(--accent-strong);
+      }
+      .hero-surface {
+        position: relative;
+        overflow: hidden;
+      }
+      .hero-surface::after {
+        content: '';
+        position: absolute;
+        inset: auto -8% -28% auto;
+        width: 12rem;
+        height: 12rem;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(15, 118, 110, 0.16), rgba(15, 118, 110, 0));
+        pointer-events: none;
+      }
     </style>
   </head>
   <body>
@@ -56,7 +76,11 @@
           <div class="fw-bold fs-4">Employee Ops Assistant</div>
           <div class="small text-muted">Internal search for policies and workflows</div>
         </div>
-        <div class="d-flex gap-3">
+        <div class="d-flex align-items-center gap-3 flex-wrap justify-content-end">
+          {% if request.session.get('admin') %}
+          <span class="badge rounded-pill status-pill px-3 py-2">Admin logged in as {{ request.session.get('admin') }}</span>
+          <a href="/admin/logout" class="btn btn-sm btn-outline-secondary">Logout</a>
+          {% endif %}
           <a href="/" class="nav-link-custom">Home</a>
           <a href="/ask" class="nav-link-custom">Ask</a>
           <a href="/admin/documents" class="nav-link-custom">Docs</a>

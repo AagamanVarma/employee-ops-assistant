@@ -1,18 +1,47 @@
 {% extends "base.html" %}
 {% block content %}
-  <h2>Admin Login</h2>
-  {% if error %}
-    <div class="alert alert-danger">{{ error }}</div>
-  {% endif %}
-  <form method="post" action="/admin/login">
-    <div class="mb-3">
-      <label class="form-label">Username</label>
-      <input class="form-control" name="username" required />
+<div class="panel p-4 p-lg-5">
+  <div class="row g-4 align-items-stretch">
+    <div class="col-lg-5">
+      <div class="feature-tile p-4 h-100">
+        <span class="badge soft-badge rounded-pill mb-3">Employee access</span>
+        <h1 class="h3 fw-bold mb-3">Open access for employees</h1>
+        <p class="text-muted mb-4">No username or password is needed. Employees can go straight to search and workflow browsing.</p>
+        <div class="d-grid gap-2">
+          <a class="btn btn-success btn-lg" href="/ask">Continue as employee</a>
+          <a class="btn btn-outline-secondary" href="/">Back to home</a>
+        </div>
+      </div>
     </div>
-    <div class="mb-3">
-      <label class="form-label">Password</label>
-      <input type="password" class="form-control" name="password" required />
+    <div class="col-lg-7">
+      <div class="feature-tile p-4 h-100">
+        <span class="badge soft-badge rounded-pill mb-3">Admin access</span>
+        <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+          <div>
+            <h2 class="h3 fw-bold mb-2">Sign in to the admin console</h2>
+            <p class="text-muted mb-4">Manage documents, workflows, and the retrieval knowledge base.</p>
+          </div>
+          <span class="badge text-bg-light">Restricted</span>
+        </div>
+        {% if error %}
+          <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+        <form method="post" action="/admin/login">
+          <div class="mb-3">
+            <label class="form-label">Username</label>
+            <input class="form-control form-control-lg" name="username" required />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Password</label>
+            <input type="password" class="form-control form-control-lg" name="password" required />
+          </div>
+          <div class="d-flex flex-wrap gap-2 align-items-center">
+            <button class="btn btn-primary btn-lg">Login as admin</button>
+            <a class="btn btn-outline-secondary btn-lg" href="/">Employee home</a>
+          </div>
+        </form>
+      </div>
     </div>
-    <button class="btn btn-primary">Login</button>
-  </form>
+  </div>
+</div>
 {% endblock %}

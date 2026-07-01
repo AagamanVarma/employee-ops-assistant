@@ -8,6 +8,7 @@ import os
 import re
 
 import numpy as np
+from dotenv import load_dotenv
 from nltk.stem.porter import PorterStemmer
 
 from app import models
@@ -18,10 +19,25 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 
 logger = logging.getLogger(__name__)
 stemmer = PorterStemmer()
+load_dotenv()
 
 MIN_DOCUMENT_SCORE = 0.08
 MIN_CHUNK_SCORE = 0.08
 MIN_WORKFLOW_SCORE = 0.08
+
+
+def _read_float_env(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if value in (None, ""):
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        logger.warning("Invalid %s value %r, using default %s", name, value, default)
+        return default
+
+
+RETRIEVAL_THRESHOLD = min(max(_read_float_env("RETRIEVAL_THRESHOLD", 0.55), 0.0), 1.0)
 
 
 class SemanticEncoder:
@@ -97,6 +113,46 @@ def _semantic_scores(query: str, texts):
     return np.dot(text_vecs, query_vec[0])
 
 
+def _confidence_adjustment(
+    query: str,
+    text: str,
+    base_score: float,
+    *,
+    title_text: str = "",
+    text_weight: float = 0.45,
+    title_weight: float = 0.18,
+    weak_penalty: float = 0.12,
+):
+    query_tokens = _token_set(query)
+    text_tokens = _token_set(text)
+    title_tokens = _token_set(title_text) if title_text else set()
+    matched_tokens = query_tokens & (text_tokens | title_tokens)
+    matched_count = len(matched_tokens)
+    query_token_count = len(query_tokens)
+
+    text_overlap = _overlap_bonus(query, text)
+    title_overlap = _overlap_bonus(query, title_text) if title_text else 0.0
+    boosted = float(base_score) + (text_overlap * text_weight) + (title_overlap * title_weight)
+    boosted += min(matched_count * 0.06, 0.12)
+
+    if matched_count == 0:
+        boosted -= weak_penalty
+    elif query_token_count > 1 and matched_count < 2:
+        boosted -= weak_penalty + 0.06
+    elif max(text_overlap, title_overlap) < 0.15:
+        boosted -= weak_penalty / 2
+
+    boosted = max(0.0, min(boosted, 1.0))
+    return {
+        "score": round(boosted, 3),
+        "raw_score": round(float(base_score), 3),
+        "text_overlap": round(text_overlap, 3),
+        "title_overlap": round(title_overlap, 3),
+        "matched_count": matched_count,
+        "query_token_count": query_token_count,
+    }
+
+
 def _hybrid_scores(query: str, texts):
     if not texts:
         return []
@@ -133,13 +189,17 @@ def _workflow_scores(query: str, workflows, min_score: float = 0.0):
     scores = _hybrid_scores(query, texts)
     scored = []
     for wf, score, text in zip(workflows, scores, texts):
-        boosted = float(score) + _overlap_bonus(query, text) * 0.4
+        adjusted = _confidence_adjustment(query, text, score, title_text=wf.name, text_weight=0.35, title_weight=0.25)
+        boosted = adjusted["score"]
         if boosted <= max(0.02, min_score):
             continue
         scored.append(
             {
                 "workflow": wf,
-                "score": round(min(boosted, 1.0), 3),
+                "score": boosted,
+                "raw_score": adjusted["raw_score"],
+                "text_overlap": adjusted["text_overlap"],
+                "title_overlap": adjusted["title_overlap"],
                 "text": text,
                 "citation": {
                     "workflow": wf.name,
@@ -164,7 +224,15 @@ def _score_chunks(query: str, chunks, min_score: float = 0.0):
             continue
         seen.add(signature)
 
-        boosted = float(score) + _overlap_bonus(query, f"{chunk.section_title or ''} {display_text}") * 0.45
+        adjusted = _confidence_adjustment(
+            query,
+            f"{chunk.section_title or ''} {display_text}",
+            score,
+            title_text=chunk.section_title or chunk.filename,
+            text_weight=0.45,
+            title_weight=0.2,
+        )
+        boosted = adjusted["score"]
         if boosted <= max(0.02, min_score):
             continue
         scored.append(
@@ -175,7 +243,10 @@ def _score_chunks(query: str, chunks, min_score: float = 0.0):
                 "section_title": chunk.section_title,
                 "page_number": chunk.page_number,
                 "document_id": chunk.document_id,
-                "score": round(min(boosted, 1.0), 3),
+                "score": boosted,
+                "raw_score": adjusted["raw_score"],
+                "text_overlap": adjusted["text_overlap"],
+                "title_overlap": adjusted["title_overlap"],
                 "citation": {
                     "document": chunk.filename,
                     "section": chunk.section_title,
@@ -194,13 +265,34 @@ def _score_documents(query: str, documents, min_score: float = 0.0):
     scores = _hybrid_scores(query, texts)
     ranked = []
     for (doc, _), score, text in zip(documents, scores, texts):
-        filename_bonus = _overlap_bonus(query, doc.filename) * 0.6
-        doc_bonus = _overlap_bonus(query, text) * 0.25
-        boosted = float(score) + filename_bonus + doc_bonus
+        adjusted = _confidence_adjustment(query, text, score, title_text=doc.filename, text_weight=0.28, title_weight=0.42)
+        boosted = adjusted["score"]
         if boosted <= max(0.02, min_score):
             continue
-        ranked.append({"document": doc, "score": round(min(boosted, 1.0), 3), "text": text})
+        ranked.append(
+            {
+                "document": doc,
+                "score": boosted,
+                "raw_score": adjusted["raw_score"],
+                "text_overlap": adjusted["text_overlap"],
+                "title_overlap": adjusted["title_overlap"],
+                "text": text,
+            }
+        )
     return sorted(ranked, key=lambda item: item["score"], reverse=True)
+
+
+def _top_candidate(items, label: str):
+    if not items:
+        return None
+    top_item = max(items, key=lambda item: item["score"])
+    return {
+        "type": label,
+        "score": top_item["score"],
+        "raw_score": top_item.get("raw_score"),
+        "text_overlap": top_item.get("text_overlap"),
+        "title_overlap": top_item.get("title_overlap"),
+    }
 
 
 def retrieve(query: str, top_k: int = 5):
@@ -253,12 +345,41 @@ def retrieve(query: str, top_k: int = 5):
                 }
             )
 
+        top_candidates = [candidate for candidate in [
+            _top_candidate(chunks, "chunk"),
+            _top_candidate(workflow_results, "workflow"),
+        ] if candidate is not None]
+        top_candidate = max(top_candidates, key=lambda item: item["score"], default=None)
+        top_score = top_candidate["score"] if top_candidate else 0.0
+        is_confident = top_score >= RETRIEVAL_THRESHOLD and bool(top_candidates)
+
+        if not is_confident:
+            chunks = []
+            workflow_results = []
+
+        fallback_reason = None
+        if not is_confident:
+            if top_candidate is None:
+                fallback_reason = "No chunk or workflow cleared the retrieval filters."
+            else:
+                fallback_reason = (
+                    f"Top {top_candidate['type']} score {top_score:.3f} is below the threshold {RETRIEVAL_THRESHOLD:.3f}."
+                )
+
         debug = {
             "query": query,
+            "threshold": RETRIEVAL_THRESHOLD,
+            "top_score": round(top_score, 3),
+            "top_candidate": top_candidate,
+            "is_confident": is_confident,
+            "fallback_reason": fallback_reason,
             "documents": [
                 {
                     "name": item["document"].filename,
                     "score": item["score"],
+                    "raw_score": item.get("raw_score"),
+                    "text_overlap": item.get("text_overlap"),
+                    "title_overlap": item.get("title_overlap"),
                     "document_id": item["document"].id,
                 }
                 for item in ranked_docs_all[:top_k]
@@ -269,6 +390,9 @@ def retrieve(query: str, top_k: int = 5):
                     "section_title": item.get("section_title"),
                     "page_number": item.get("page_number"),
                     "score": item["score"],
+                    "raw_score": item.get("raw_score"),
+                    "text_overlap": item.get("text_overlap"),
+                    "title_overlap": item.get("title_overlap"),
                     "snippet": item["content"][:280],
                 }
                 for item in chunk_ranked_all[:top_k]
@@ -277,6 +401,9 @@ def retrieve(query: str, top_k: int = 5):
                 {
                     "title": item["workflow"].name,
                     "score": item["score"],
+                    "raw_score": item.get("raw_score"),
+                    "text_overlap": item.get("text_overlap"),
+                    "title_overlap": item.get("title_overlap"),
                     "snippet": item["text"][:280],
                 }
                 for item in workflow_ranked_all[:top_k]
@@ -285,6 +412,7 @@ def retrieve(query: str, top_k: int = 5):
                 {
                     "name": item["document"].filename,
                     "score": item["score"],
+                    "raw_score": item.get("raw_score"),
                 }
                 for item in ranked_docs[:top_k]
             ],
@@ -294,6 +422,7 @@ def retrieve(query: str, top_k: int = 5):
                     "section_title": item.get("section_title"),
                     "page_number": item.get("page_number"),
                     "score": item["score"],
+                    "raw_score": item.get("raw_score"),
                 }
                 for item in chunks
             ],
@@ -301,6 +430,7 @@ def retrieve(query: str, top_k: int = 5):
                 {
                     "title": item["workflow"].name,
                     "score": item["score"],
+                    "raw_score": item.get("raw_score"),
                 }
                 for item in workflow_results
             ],
@@ -314,6 +444,17 @@ def retrieve(query: str, top_k: int = 5):
             debug["workflows"],
         )
 
-        return {"chunks": chunks, "workflows": workflow_results, "debug": debug}
+        return {
+            "chunks": chunks,
+            "workflows": workflow_results,
+            "debug": debug,
+            "confidence": {
+                "threshold": RETRIEVAL_THRESHOLD,
+                "top_score": round(top_score, 3),
+                "is_confident": is_confident,
+                "fallback_reason": fallback_reason,
+                "fallback_message": "Please contact HR for clarification." if not is_confident else None,
+            },
+        }
     finally:
         db.close()

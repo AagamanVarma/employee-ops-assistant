@@ -5,6 +5,7 @@ from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.orm import Session
 from app import models
 from app.database import get_db, engine
+from app.routers.admin import get_current_admin
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -24,21 +25,25 @@ def list_workflows(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request,
         "workflows/list.html",
-        {"request": request, "workflows": items},
+        {"request": request, "workflows": items, "is_admin": bool(get_current_admin(request))},
     )
 
 
 @router.get("/workflows/create")
 def create_workflow_form(request: Request):
+    if not get_current_admin(request):
+        return RedirectResponse(url="/admin/login", status_code=303)
     return templates.TemplateResponse(
         request,
         "workflows/create.html",
-        {"request": request},
+        {"request": request, "is_admin": True},
     )
 
 
 @router.post("/workflows/create")
 def create_workflow(request: Request, name: str = Form(...), description: str = Form(None), steps: str = Form(...), db: Session = Depends(get_db)):
+    if not get_current_admin(request):
+        return RedirectResponse(url="/admin/login", status_code=303)
     steps_list = _build_steps(steps)
     wf = models.Workflow(name=name, description=description)
     db.add(wf)
@@ -65,12 +70,14 @@ def view_workflow(workflow_id: int, request: Request, db: Session = Depends(get_
     return templates.TemplateResponse(
         request,
         "workflows/view.html",
-        {"request": request, "workflow": wf, "steps": steps},
+        {"request": request, "workflow": wf, "steps": steps, "is_admin": bool(get_current_admin(request))},
     )
 
 
 @router.post("/workflows/{workflow_id}/delete")
-def delete_workflow(workflow_id: int, db: Session = Depends(get_db)):
+def delete_workflow(request: Request, workflow_id: int, db: Session = Depends(get_db)):
+    if not get_current_admin(request):
+        return RedirectResponse(url="/admin/login", status_code=303)
     wf = db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
     if not wf:
         raise HTTPException(status_code=404, detail="Workflow not found")

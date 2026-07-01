@@ -10,7 +10,7 @@ import os
 
 app = FastAPI(title="Employee Ops Assistant")
 
-# Session secret for admin login (override with ENV var in production)
+# Session secret for admin login 
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
