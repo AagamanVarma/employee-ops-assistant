@@ -1,9 +1,15 @@
 {% extends 'base.html' %}
 {% block title %}Documents - Admin{% endblock %}
 {% block content %}
-<h1>Documents</h1>
-<p><a class="btn btn-primary" href="/admin/documents/upload">Upload document</a></p>
-<table class="table">
+<div class="panel p-4 p-lg-5">
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+  <div>
+    <h1 class="mb-1">Documents</h1>
+    <p class="text-muted mb-0">Uploaded files are processed in the background after upload.</p>
+  </div>
+  <a class="btn btn-primary" href="/admin/documents/upload">Upload document</a>
+</div>
+<table class="table align-middle">
   <thead><tr><th>ID</th><th>Filename</th><th>Uploaded At</th><th>Actions</th></tr></thead>
   <tbody>
     {% for d in documents %}

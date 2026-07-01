@@ -7,7 +7,10 @@
     python-multipart
     PyMuPDF
     chromadb
-    sentence-transformers
+    scikit-learn
+    numpy<2
+    nltk
+    sentence-transformers==2.2.2
     huggingface-hub==0.16.4
     google-generativeai
     python-dotenv

@@ -39,5 +39,7 @@ def ask_search(request: Request, query: str = Form(...)):
             "examples": EXAMPLE_QUERIES,
             "results": results,
             "show_fallback": show_fallback,
+            "debug": results.get("debug", {}),
+            "contact_hr": show_fallback,
         },
     )

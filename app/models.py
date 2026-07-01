@@ -52,6 +52,8 @@ class DocumentChunk(Base):
     id = Column(Integer, primary_key=True, index=True)
     document_id = Column(Integer, ForeignKey("documents.id"), nullable=False)
     filename = Column(String(512), nullable=False)
+    section_title = Column(String(512), nullable=True)
+    page_number = Column(Integer, nullable=True)
     chunk_index = Column(Integer, nullable=False)
     chunk_text = Column(Text, nullable=False)
 

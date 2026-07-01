@@ -9,3 +9,8 @@ data/app.db
 *.sqlite3
 *.db
 /.pytest_cache
+data/documents/
+data/chroma/
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal

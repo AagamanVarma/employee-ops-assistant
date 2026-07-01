@@ -1,17 +1,42 @@
-<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Employee Ops Assistant</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-  </head>
-  <body class="p-4">
-    <div class="container">
-      <h1>Employee Ops Assistant</h1>
-      <p>Public employee-facing query page (Phase 1 placeholder).</p>
-      <a class="btn btn-primary" href="/workflows">View Workflows</a>
-      <a class="btn btn-secondary" href="/admin">Admin</a>
+{% extends 'base.html' %}
+{% block title %}Employee Ops Assistant{% endblock %}
+{% block content %}
+<div class="panel p-4 p-lg-5">
+  <div class="row align-items-center g-4">
+    <div class="col-lg-7">
+      <span class="badge soft-badge rounded-pill mb-3">Ready for internal search</span>
+      <h1 class="display-5 fw-bold hero-title mb-3">Find policies and workflows fast.</h1>
+      <p class="lead text-muted mb-4">
+        Use the assistant to search employee policies, upload documents, and browse workflow steps.
+        This version keeps the setup simple and does not use an LLM yet.
+      </p>
+      <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-success btn-lg" href="/ask">Ask a question</a>
+        <a class="btn btn-outline-secondary btn-lg" href="/workflows">View workflows</a>
+        <a class="btn btn-outline-secondary btn-lg" href="/admin/documents">Manage documents</a>
+      </div>
     </div>
-  </body>
-</html>
+    <div class="col-lg-5">
+      <div class="feature-tile p-4 mb-3">
+        <div class="fw-semibold mb-1">Workflows</div>
+        <div class="text-muted">Browse step-by-step process guides for common employee requests.</div>
+        <div class="mt-3">
+          <a class="btn btn-sm btn-outline-secondary" href="/workflows">Open workflows</a>
+        </div>
+      </div>
+      <div class="feature-tile p-4 mb-3">
+        <div class="fw-semibold mb-1">Docs and policies</div>
+        <div class="text-muted">Upload policy PDFs, keep them current, and search them from the Ask page.</div>
+        <div class="mt-3 d-flex gap-2 flex-wrap">
+          <a class="btn btn-sm btn-outline-secondary" href="/admin/documents">Open docs</a>
+          <a class="btn btn-sm btn-outline-secondary" href="/admin/documents/upload">Upload PDF</a>
+        </div>
+      </div>
+      <div class="feature-tile p-4">
+        <div class="fw-semibold mb-1">For admins</div>
+        <div class="text-muted">Review workflows, manage documents, and keep the knowledge base updated.</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

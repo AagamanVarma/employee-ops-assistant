@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Depends, UploadFile, File, Form
+from fastapi import APIRouter, Request, Depends, UploadFile, File, BackgroundTasks
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
@@ -9,7 +9,7 @@ import shutil
 from app.database import get_db, engine
 from app import models
 from app.routers.admin import get_current_admin
-from app.services.document_processor import process_document
+from app.services.document_processor import process_document_background
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
@@ -36,7 +36,12 @@ def upload_form(request: Request):
 
 
 @router.post("/admin/documents/upload")
-def upload_document(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
+def upload_document(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
     if not get_current_admin(request):
         return RedirectResponse(url="/admin/login")
 
@@ -58,12 +63,7 @@ def upload_document(request: Request, file: UploadFile = File(...), db: Session 
     db.commit()
     db.refresh(doc)
 
-    # Process document (extract + chunk) asynchronously would be ideal; keep simple and synchronous for PoC
-    try:
-        process_document(doc.id, db)
-    except Exception as e:
-        # log error but continue
-        print("Error processing document:", e)
+    background_tasks.add_task(process_document_background, doc.id)
 
     return RedirectResponse(url="/admin/documents", status_code=303)
 

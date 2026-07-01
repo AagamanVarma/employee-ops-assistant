@@ -1,12 +1,88 @@
 {% extends 'base.html' %}
 {% block title %}Upload Document{% endblock %}
 {% block content %}
-<h1>Upload Document (PDF)</h1>
-<form method="post" action="/admin/documents/upload" enctype="multipart/form-data">
-  <div class="mb-3">
-    <label class="form-label">Select PDF</label>
-    <input class="form-control" type="file" name="file" accept="application/pdf" required />
-  </div>
-  <button class="btn btn-primary" type="submit">Upload</button>
-</form>
+<div class="panel p-4 p-lg-5">
+  <h1 class="mb-2">Upload Document (PDF)</h1>
+  <p class="text-muted mb-4">You will see the upload progress before the file is processed in the background.</p>
+  <form id="upload-form" method="post" action="/admin/documents/upload" enctype="multipart/form-data">
+    <div class="mb-3">
+      <label class="form-label">Select PDF</label>
+      <input id="file-input" class="form-control" type="file" name="file" accept="application/pdf" required />
+    </div>
+    <div id="file-meta" class="small text-muted mb-3" style="display: none;"></div>
+    <div id="progress-wrap" class="mb-3" style="display: none;">
+      <div class="progress" style="height: 22px;">
+        <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%">0%</div>
+      </div>
+      <div id="progress-text" class="small text-muted mt-2">Waiting to upload...</div>
+    </div>
+    <button id="upload-button" class="btn btn-primary" type="submit">Upload</button>
+  </form>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const form = document.getElementById('upload-form');
+    const fileInput = document.getElementById('file-input');
+    const fileMeta = document.getElementById('file-meta');
+    const progressWrap = document.getElementById('progress-wrap');
+    const progressBar = document.getElementById('progress-bar');
+    const progressText = document.getElementById('progress-text');
+    const uploadButton = document.getElementById('upload-button');
+
+    fileInput.addEventListener('change', function () {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) {
+        fileMeta.style.display = 'none';
+        return;
+      }
+      const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+      fileMeta.textContent = `Selected file: ${file.name} (${sizeMb} MB)`;
+      fileMeta.style.display = 'block';
+    });
+
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) {
+        return;
+      }
+
+      const formData = new FormData(form);
+      const xhr = new XMLHttpRequest();
+
+      uploadButton.disabled = true;
+      progressWrap.style.display = 'block';
+      progressBar.style.width = '0%';
+      progressBar.textContent = '0%';
+      progressText.textContent = 'Uploading file...';
+
+      xhr.upload.addEventListener('progress', function (event) {
+        if (!event.lengthComputable) {
+          progressText.textContent = 'Uploading file...';
+          return;
+        }
+        const percent = Math.round((event.loaded / event.total) * 100);
+        progressBar.style.width = percent + '%';
+        progressBar.textContent = percent + '%';
+        progressText.textContent = `Uploaded ${ (event.loaded / (1024 * 1024)).toFixed(2) } MB of ${ (event.total / (1024 * 1024)).toFixed(2) } MB`;
+      });
+
+      xhr.addEventListener('load', function () {
+        progressBar.style.width = '100%';
+        progressBar.textContent = '100%';
+        progressText.textContent = 'Upload complete. Processing document in the background...';
+        window.location.href = '/admin/documents';
+      });
+
+      xhr.addEventListener('error', function () {
+        uploadButton.disabled = false;
+        progressText.textContent = 'Upload failed. Please try again.';
+      });
+
+      xhr.open('POST', form.action, true);
+      xhr.send(formData);
+    });
+  });
+</script>
 {% endblock %}
