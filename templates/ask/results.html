@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+{% block title %}Search results{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-8">
+    <div class="card p-4 shadow-sm mb-4">
+      <h1 class="mb-3">Ask a question</h1>
+      <form method="post" action="/ask">
+        <div class="mb-3">
+          <input id="query-input" name="query" type="text" class="form-control form-control-lg" placeholder="Ask about policies or workflows..." value="{{ query }}" required>
+        </div>
+        <button class="btn btn-primary btn-lg w-100" type="submit">Ask</button>
+      </form>
+      <div class="mt-4">
+        <p class="mb-2">Try an example:</p>
+        <div class="d-flex flex-wrap gap-2">
+          {% for example in examples %}
+          <button type="button" class="btn btn-outline-secondary btn-sm example-button">{{ example }}</button>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% if show_fallback %}
+    <div class="alert alert-warning">Please contact HR for clarification.</div>
+    {% endif %}
+    {% if results and results.chunks %}
+    <div class="mb-4">
+      <h2>Policy results</h2>
+      {% for chunk in results.chunks %}
+      <div class="card mb-3">
+        <div class="card-body">
+          <p class="small text-muted mb-1">Source: {{ chunk.source or 'unknown' }} | Score: {{ chunk.score }}</p>
+          <p class="mb-0">{{ chunk.content }}</p>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if results and results.workflows %}
+    <div class="mb-4">
+      <h2>Workflow matches</h2>
+      {% for wf in results.workflows %}
+      <div class="card mb-3">
+        <div class="card-body">
+          <div class="d-flex justify-content-between mb-2">
+            <h5 class="card-title mb-0">{{ wf.title }}</h5>
+            <span class="badge bg-secondary">Score: {{ wf.score }}</span>
+          </div>
+          {% if wf.description %}
+          <p class="text-muted">{{ wf.description }}</p>
+          {% endif %}
+          <ol>
+            {% for step in wf.steps %}
+            <li>{{ step }}</li>
+            {% endfor %}
+          </ol>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('.example-button').forEach(function (button) {
+      button.addEventListener('click', function () {
+        document.getElementById('query-input').value = button.textContent.trim();
+      });
+    });
+  });
+</script>
+{% endblock %}

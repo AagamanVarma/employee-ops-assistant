@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+  <h2>{{ workflow.name }}</h2>
+  <p>{{ workflow.description }}</p>
+  <ol>
+    {% for s in steps %}
+      <li>{{ s }}</li>
+    {% endfor %}
+  </ol>
+  <form method="post" action="/workflows/{{ workflow.id }}/delete">
+    <button class="btn btn-danger">Delete</button>
+    <a class="btn btn-secondary" href="/workflows">Back</a>
+  </form>
+{% endblock %}

@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% block title %}Documents - Admin{% endblock %}
+{% block content %}
+<h1>Documents</h1>
+<p><a class="btn btn-primary" href="/admin/documents/upload">Upload document</a></p>
+<table class="table">
+  <thead><tr><th>ID</th><th>Filename</th><th>Uploaded At</th><th>Actions</th></tr></thead>
+  <tbody>
+    {% for d in documents %}
+    <tr>
+      <td>{{ d.id }}</td>
+      <td>{{ d.filename }}</td>
+      <td>{{ d.uploaded_at }}</td>
+      <td>
+        <form method="post" action="/admin/documents/delete/{{ d.id }}" onsubmit="return confirm('Delete document?');">
+          <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

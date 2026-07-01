@@ -1,0 +1,15 @@
+    fastapi
+    uvicorn[standard]
+    jinja2
+    sqlalchemy
+    pydantic
+    passlib
+    python-multipart
+    PyMuPDF
+    chromadb
+    sentence-transformers
+    huggingface-hub==0.16.4
+    google-generativeai
+    python-dotenv
+    itsdangerous
+    

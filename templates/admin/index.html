@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+  <h2>Admin Dashboard</h2>
+  <p>Welcome, admin.</p>
+  <a class="btn btn-success mb-3" href="/workflows/create">Create Workflow</a>
+  <h3>Workflows</h3>
+  <ul class="list-group">
+    {% for wf in workflows %}
+      <li class="list-group-item d-flex justify-content-between align-items-center">
+        <div>
+          <strong>{{ wf.name }}</strong>
+        </div>
+        <div>
+          <a class="btn btn-sm btn-primary" href="/workflows/{{ wf.id }}">View</a>
+        </div>
+      </li>
+    {% else %}
+      <li class="list-group-item">No workflows yet.</li>
+    {% endfor %}
+  </ul>
+{% endblock %}
