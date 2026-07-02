@@ -27,7 +27,7 @@ MIN_WORKFLOW_SCORE = 0.08
 
 
 def _read_float_env(name: str, default: float) -> float:
-    value = os.environ.get(name)
+    value = os.getenv(name)
     if value in (None, ""):
         return default
     try:
@@ -42,7 +42,7 @@ RETRIEVAL_THRESHOLD = min(max(_read_float_env("RETRIEVAL_THRESHOLD", 0.55), 0.0)
 
 class SemanticEncoder:
     def __init__(self, model_name: str | None = None):
-        self.model_name = model_name or os.environ.get(
+        self.model_name = model_name or os.getenv(
             "EMBEDDING_MODEL",
             "sentence-transformers/all-MiniLM-L6-v2",
         )
@@ -352,9 +352,10 @@ def retrieve(query: str, top_k: int = 5):
         ] if candidate is not None]
         top_candidate = max(top_candidates, key=lambda item: item["score"], default=None)
         top_score = top_candidate["score"] if top_candidate else 0.0
+        has_retrieval_context = bool(chunks or workflow_results)
         is_confident = top_score >= RETRIEVAL_THRESHOLD and bool(top_candidates)
 
-        if not is_confident:
+        if not is_confident and not has_retrieval_context:
             chunks = []
             workflow_results = []
 
@@ -453,8 +454,9 @@ def retrieve(query: str, top_k: int = 5):
                 "threshold": RETRIEVAL_THRESHOLD,
                 "top_score": round(top_score, 3),
                 "is_confident": is_confident,
+                "has_retrieval_context": has_retrieval_context,
                 "fallback_reason": fallback_reason,
-                "fallback_message": "Please contact HR for clarification." if not is_confident else None,
+                "fallback_message": "Please contact HR for clarification." if not is_confident and not has_retrieval_context else None,
             },
         }
     finally:

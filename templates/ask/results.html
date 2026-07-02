@@ -2,9 +2,15 @@
 {% block title %}Search results{% endblock %}
 {% block content %}
 <div class="row justify-content-center">
-  <div class="col-md-8">
-    <div class="card p-4 shadow-sm mb-4">
-      <h1 class="mb-3">Ask a question</h1>
+  <div class="col-lg-10">
+    <div class="panel p-4 p-lg-5 mb-4">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+        <div>
+          <span class="badge soft-badge rounded-pill mb-3">Enterprise assistant</span>
+          <h1 class="display-6 fw-bold hero-title mb-2">Ask a policy or workflow question</h1>
+          <p class="text-muted mb-0">Answers use company policies and workflows when available.</p>
+        </div>
+      </div>
       <form method="post" action="/ask">
         <div class="mb-3">
           <input id="query-input" name="query" type="text" class="form-control form-control-lg" placeholder="Ask about policies or workflows..." value="{{ query }}" required>
@@ -12,7 +18,7 @@
         <button class="btn btn-primary btn-lg w-100" type="submit">Ask</button>
       </form>
       <div class="mt-4">
-        <p class="mb-2">Try an example:</p>
+        <p class="mb-2 text-muted">Try an example:</p>
         <div class="d-flex flex-wrap gap-2">
           {% for example in examples %}
           <button type="button" class="btn btn-outline-secondary btn-sm example-button">{{ example }}</button>
@@ -20,70 +26,74 @@
         </div>
       </div>
     </div>
+
     {% if show_fallback %}
-    <div class="alert alert-warning">{{ fallback_message }}</div>
+    <div class="alert alert-warning mb-4">{{ fallback_message }}</div>
     {% endif %}
-    {% if results and results.chunks %}
-    <div class="mb-4">
-      <h2>Policy results</h2>
-      {% for chunk in results.chunks %}
-      <div class="card mb-3">
-        <div class="card-body">
-          <p class="small text-muted mb-1">Source: {{ chunk.source or 'unknown' }} | Score: {{ chunk.score }}</p>
-          <p class="small text-muted mb-2">
-            Reference:
-            {{ chunk.citation.document if chunk.citation else (chunk.source or 'unknown') }}
-            {% if chunk.citation and chunk.citation.section %} | {{ chunk.citation.section }}{% endif %}
-            {% if chunk.citation and chunk.citation.page %} | Page {{ chunk.citation.page }}{% endif %}
-          </p>
-          <p class="mb-0">{{ chunk.content }}</p>
+
+    {% if results and results.answer %}
+    <div class="panel p-4 p-lg-5 mb-4">
+      <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+        <div>
+          <span class="badge text-bg-light mb-2">Answer</span>
+          <h2 class="h4 mb-0">Response</h2>
         </div>
       </div>
-      {% endfor %}
+      <div class="fs-5 lh-lg">{{ results.answer | replace('\n', '<br>') | safe }}</div>
     </div>
     {% endif %}
+
+    {% if results and results.citations %}
+    <div class="panel p-4 p-lg-5 mb-4">
+      <h3 class="h5 mb-3">Sources</h3>
+      <ul class="list-group list-group-flush">
+        {% for citation in results.citations %}
+        <li class="list-group-item px-0">{{ citation }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
     {% if results and results.workflows %}
-    <div class="mb-4">
-      <h2>Workflow matches</h2>
-      {% for wf in results.workflows %}
-      <div class="card mb-3">
-        <div class="card-body">
-          <div class="d-flex justify-content-between mb-2">
-            <h5 class="card-title mb-0">{{ wf.title }}</h5>
-            <span class="badge bg-secondary">Score: {{ wf.score }}</span>
+    <div class="panel p-4 p-lg-5 mb-4">
+      <h3 class="h5 mb-3">Related workflows</h3>
+      <div class="row g-3">
+        {% for wf in results.workflows %}
+        <div class="col-lg-6">
+          <div class="feature-tile p-4 h-100">
+            <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
+              <div>
+                <div class="fw-semibold">{{ wf.title }}</div>
+                {% if wf.description %}<div class="small text-muted mt-1">{{ wf.description }}</div>{% endif %}
+              </div>
+              <span class="badge bg-secondary">{{ wf.score }}</span>
+            </div>
+            {% if wf.steps %}
+            <ol class="mb-0 ps-3">
+              {% for step in wf.steps %}
+              <li class="mb-1">{{ step }}</li>
+              {% endfor %}
+            </ol>
+            {% endif %}
           </div>
-          <p class="small text-muted mb-2">Reference: workflow {{ wf.title }}</p>
-          {% if wf.description %}
-          <p class="text-muted">{{ wf.description }}</p>
-          {% endif %}
-          <ol>
-            {% for step in wf.steps %}
-            <li>{{ step }}</li>
-            {% endfor %}
-          </ol>
         </div>
+        {% endfor %}
       </div>
-      {% endfor %}
     </div>
     {% endif %}
 
     {% if debug %}
-    <details class="card mb-4">
-      <summary class="card-header fw-semibold">Retrieval debug</summary>
-      <div class="card-body">
-        <p class="small text-muted mb-2">This section is for development and tuning only.</p>
+    <details class="panel p-4 p-lg-5 mb-4">
+      <summary class="fw-semibold">Development debug</summary>
+      <div class="mt-3">
         <div class="mb-3">
           <div class="fw-semibold mb-2">Confidence</div>
-          <div class="small text-muted">Threshold: {{ debug.threshold }} | Top score: {{ debug.top_score }}</div>
-          {% if debug.fallback_reason %}
+          <div class="small text-muted">Threshold: {{ debug.threshold }} | Top score: {{ debug.top_score }} | Chunk count: {{ debug.retrieved_chunk_count }} | Workflow count: {{ debug.retrieved_workflow_count }} | LLM: {{ debug.llm_source }}</div>
+          {% if debug.fallback_triggered %}
           <div class="small text-danger mt-1">Fallback triggered: {{ debug.fallback_reason }}</div>
           {% else %}
-          <div class="small text-success mt-1">Retrieval passed the confidence gate.</div>
+          <div class="small text-success mt-1">Answer generated from retrieved context.</div>
           {% endif %}
-        </div>
-        <div class="mb-3">
-          <div class="fw-semibold mb-2">Query</div>
-          <div class="text-muted">{{ debug.query }}</div>
         </div>
         <div class="mb-3">
           <div class="fw-semibold mb-2">Top documents</div>
@@ -93,19 +103,6 @@
               <span>{{ doc.name }}</span>
               <span class="badge bg-secondary">{{ doc.score }}</span>
             </li>
-            {% endfor %}
-          </ul>
-        </div>
-        <div class="mb-3">
-          <div class="fw-semibold mb-2">Selected documents</div>
-          <ul class="list-group">
-            {% for doc in debug.selected_documents %}
-            <li class="list-group-item d-flex justify-content-between align-items-center">
-              <span>{{ doc.name }}</span>
-              <span class="badge bg-success">{{ doc.score }}</span>
-            </li>
-            {% else %}
-            <li class="list-group-item text-muted">No document cleared the confidence threshold.</li>
             {% endfor %}
           </ul>
         </div>
@@ -123,24 +120,6 @@
           </div>
           {% endfor %}
         </div>
-        <div class="mb-3">
-          <div class="fw-semibold mb-2">Selected chunks</div>
-          {% for chunk in debug.selected_chunks %}
-          <div class="border rounded p-3 mb-2">
-            <div class="small text-muted mb-1">
-              {{ chunk.source }}
-              {% if chunk.section_title %}| {{ chunk.section_title }}{% endif %}
-              {% if chunk.page_number %}| Page {{ chunk.page_number }}{% endif %}
-              | Score {{ chunk.score }}
-            </div>
-            {% if chunk.citation %}
-            <div class="small text-muted">Citation: {{ chunk.citation.document }}{% if chunk.citation.section %} | {{ chunk.citation.section }}{% endif %}{% if chunk.citation.page %} | Page {{ chunk.citation.page }}{% endif %}</div>
-            {% endif %}
-          </div>
-          {% else %}
-          <div class="text-muted">No chunk cleared the confidence threshold.</div>
-          {% endfor %}
-        </div>
         <div>
           <div class="fw-semibold mb-2">Workflow matches</div>
           {% for wf in debug.workflows %}
@@ -151,20 +130,6 @@
             </div>
             <div class="small text-muted mt-1">{{ wf.snippet }}</div>
           </div>
-          {% endfor %}
-        </div>
-        <div class="mt-3">
-          <div class="fw-semibold mb-2">Selected workflows</div>
-          {% for wf in debug.selected_workflows %}
-          <div class="border rounded p-3 mb-2 d-flex justify-content-between">
-            <span>{{ wf.title }}</span>
-            <span class="badge bg-success">{{ wf.score }}</span>
-          </div>
-          {% if wf.citation %}
-          <div class="small text-muted mb-2">Citation: workflow {{ wf.citation.workflow }}{% if wf.citation.steps %} | {{ wf.citation.steps }} steps{% endif %}</div>
-          {% endif %}
-          {% else %}
-          <div class="text-muted">No workflow cleared the confidence threshold.</div>
           {% endfor %}
         </div>
       </div>

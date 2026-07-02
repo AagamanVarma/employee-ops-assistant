@@ -41,12 +41,7 @@ For the best future semantic retrieval model, use a CPU-friendly sentence-transf
 # Gemini API
 Set the environment variable `GEN_API_KEY` to your Google Cloud API key before running the app.
 
-Create a `.env` file in the project root (or set env vars in your shell). You can copy the example:
-
-```bash
-cp .env.example .env
-# then edit .env and set GEN_API_KEY
-```
+Create a `.env` file in the project root (or set env vars in your shell) and set GEN_API_KEY.
 
 Create the database tables:
 

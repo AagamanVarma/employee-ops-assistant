@@ -4,14 +4,17 @@ from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 from jinja2 import Environment, FileSystemLoader
 from starlette.middleware.sessions import SessionMiddleware
+from dotenv import load_dotenv
 from app.routers import workflows, admin, documents, ask
 from app.services.schema import ensure_schema
 import os
 
+load_dotenv()
+
 app = FastAPI(title="Employee Ops Assistant")
 
 # Session secret for admin login 
-SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-me")
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
