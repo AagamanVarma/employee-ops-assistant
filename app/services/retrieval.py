@@ -13,6 +13,7 @@ from nltk.stem.porter import PorterStemmer
 
 from app import models
 from app.database import SessionLocal
+from app.services.query_classifier import classify_query
 from app.services.schema import ensure_schema
 from sqlalchemy.orm import Session
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -153,7 +154,7 @@ def _confidence_adjustment(
     }
 
 
-def _hybrid_scores(query: str, texts):
+def _lexical_scores(query: str, texts):
     if not texts:
         return []
     word_vectorizer = TfidfVectorizer(
@@ -169,12 +170,40 @@ def _hybrid_scores(query: str, texts):
 
     word_scores = (word_matrix[1:] * word_matrix[0].T).toarray().ravel()
     char_scores = (char_matrix[1:] * char_matrix[0].T).toarray().ravel()
-    semantic_scores = _semantic_scores(query, texts)
 
-    combined_scores = []
-    for word_score, char_score, semantic_score in zip(word_scores, char_scores, semantic_scores):
-        combined_scores.append(0.4 * word_score + 0.25 * char_score + 0.35 * float(semantic_score))
-    return combined_scores
+    lexical_scores = []
+    query_terms = {term for term in re.findall(r"[a-z0-9]{2,}", _normalize(query))}
+    for index, (word_score, char_score) in enumerate(zip(word_scores, char_scores)):
+        lexical_score = 0.7 * float(word_score) + 0.3 * float(char_score)
+        if query_terms:
+            text_terms = {term for term in re.findall(r"[a-z0-9]{2,}", _normalize(texts[index]))}
+            if query_terms & text_terms:
+                lexical_score += 0.12
+        lexical_scores.append(float(np.clip(lexical_score, 0.0, 1.0)))
+    return lexical_scores
+
+
+def _hybrid_score_details(query: str, texts):
+    if not texts:
+        return []
+    semantic_scores = _semantic_scores(query, texts)
+    lexical_scores = _lexical_scores(query, texts)
+    details = []
+    for semantic_score, lexical_score in zip(semantic_scores, lexical_scores):
+        final_score = 0.55 * float(semantic_score) + 0.45 * float(lexical_score)
+        details.append(
+            {
+                "semantic_score": round(float(semantic_score), 3),
+                "lexical_score": round(float(lexical_score), 3),
+                "hybrid_score": round(float(final_score), 3),
+            }
+        )
+    return details
+
+
+def _hybrid_scores(query: str, texts):
+    score_details = _hybrid_score_details(query, texts)
+    return [item["hybrid_score"] for item in score_details]
 
 
 def _search_workflows(db: Session, query: str, limit: int = 5):
@@ -186,10 +215,10 @@ def _workflow_scores(query: str, workflows, min_score: float = 0.0):
     if not workflows:
         return []
     texts = [f"{wf.name} {wf.description or ''} {' '.join(step.description for step in wf.workflow_steps)}" for wf in workflows]
-    scores = _hybrid_scores(query, texts)
+    score_details = _hybrid_score_details(query, texts)
     scored = []
-    for wf, score, text in zip(workflows, scores, texts):
-        adjusted = _confidence_adjustment(query, text, score, title_text=wf.name, text_weight=0.35, title_weight=0.25)
+    for wf, details, text in zip(workflows, score_details, texts):
+        adjusted = _confidence_adjustment(query, text, details["hybrid_score"], title_text=wf.name, text_weight=0.35, title_weight=0.25)
         boosted = adjusted["score"]
         if boosted <= max(0.02, min_score):
             continue
@@ -201,6 +230,9 @@ def _workflow_scores(query: str, workflows, min_score: float = 0.0):
                 "text_overlap": adjusted["text_overlap"],
                 "title_overlap": adjusted["title_overlap"],
                 "text": text,
+                "semantic_score": details["semantic_score"],
+                "lexical_score": details["lexical_score"],
+                "hybrid_score": details["hybrid_score"],
                 "citation": {
                     "workflow": wf.name,
                     "steps": len(wf.workflow_steps),
@@ -214,10 +246,10 @@ def _score_chunks(query: str, chunks, min_score: float = 0.0):
     if not chunks:
         return []
     texts = [f"{chunk.section_title or ''} {chunk.chunk_text}".strip() for chunk in chunks]
-    scores = _hybrid_scores(query, texts)
+    score_details = _hybrid_score_details(query, texts)
     scored = []
     seen = set()
-    for chunk, score in zip(chunks, scores):
+    for chunk, details in zip(chunks, score_details):
         display_text = chunk.chunk_text.strip()
         signature = _dedupe_key(display_text)
         if not signature or signature in seen:
@@ -227,7 +259,7 @@ def _score_chunks(query: str, chunks, min_score: float = 0.0):
         adjusted = _confidence_adjustment(
             query,
             f"{chunk.section_title or ''} {display_text}",
-            score,
+            details["hybrid_score"],
             title_text=chunk.section_title or chunk.filename,
             text_weight=0.45,
             title_weight=0.2,
@@ -244,6 +276,9 @@ def _score_chunks(query: str, chunks, min_score: float = 0.0):
                 "page_number": chunk.page_number,
                 "document_id": chunk.document_id,
                 "score": boosted,
+                "semantic_score": details["semantic_score"],
+                "lexical_score": details["lexical_score"],
+                "hybrid_score": details["hybrid_score"],
                 "raw_score": adjusted["raw_score"],
                 "text_overlap": adjusted["text_overlap"],
                 "title_overlap": adjusted["title_overlap"],
@@ -295,10 +330,107 @@ def _top_candidate(items, label: str):
     }
 
 
+def _query_term_density(query: str, text: str) -> float:
+    query_terms = [term for term in re.findall(r"[a-z0-9]{2,}", _normalize(query))]
+    if not query_terms:
+        return 0.0
+    text_terms = [term for term in re.findall(r"[a-z0-9]{2,}", _normalize(text))]
+    if not text_terms:
+        return 0.0
+    overlap = sum(1 for term in query_terms if term in text_terms)
+    return overlap / max(len(query_terms), 1)
+
+
+def _rerank_candidates(query: str, candidates: list[dict], *, title_field: str = "title") -> list[dict]:
+    if not candidates:
+        return []
+    normalized_query = _normalize(query)
+    query_terms = set(re.findall(r"[a-z0-9]{2,}", normalized_query))
+    acronym_terms = {term for term in query_terms if len(term) <= 4}
+    reranked = []
+    for candidate in candidates:
+        text = candidate.get("content") or candidate.get("text") or ""
+        title = candidate.get("section_title") or candidate.get("title") or ""
+        base_score = float(candidate.get("score", 0.0))
+        exact_overlap = sum(1 for term in query_terms if term and term in _normalize(text))
+        acronym_overlap = sum(1 for term in acronym_terms if term and term in _normalize(text))
+        title_overlap = sum(1 for term in query_terms if term and term in _normalize(title))
+        density = _query_term_density(query, text)
+        boost = 0.0
+        if exact_overlap:
+            boost += 0.06 * min(exact_overlap, 3)
+        if acronym_overlap:
+            boost += 0.05 * min(acronym_overlap, 2)
+        if title_overlap:
+            boost += 0.05 * min(title_overlap, 2)
+        if density > 0.2:
+            boost += 0.04
+        if candidate.get("section_title") and candidate.get("section_title") in title:
+            boost += 0.01
+        reranked_score = min(1.0, base_score + boost)
+        reranked.append(
+            {
+                **candidate,
+                "score": round(reranked_score, 3),
+                "rerank_boost": round(boost, 3),
+                "reranked_score": round(reranked_score, 3),
+                "original_score": base_score,
+            }
+        )
+    return sorted(reranked, key=lambda item: item["reranked_score"], reverse=True)
+
+
+def _retrieval_limits(intent: str, top_k: int) -> dict[str, int]:
+    if intent == "workflow":
+        return {"doc_limit": 2, "chunk_limit": 2, "workflow_limit": max(top_k, 3)}
+    if intent == "policy":
+        return {"doc_limit": max(3, top_k), "chunk_limit": max(top_k, 3), "workflow_limit": 1}
+    if intent == "mixed":
+        return {"doc_limit": max(3, top_k), "chunk_limit": max(2, min(top_k, 3)), "workflow_limit": max(2, min(top_k, 3))}
+    return {"doc_limit": 0, "chunk_limit": 0, "workflow_limit": 0}
+
+
 def retrieve(query: str, top_k: int = 5):
     ensure_schema()
     db = SessionLocal()
     try:
+        intent_result = classify_query(query)
+        intent = intent_result.get("intent", "unknown")
+        retrieval_limits = _retrieval_limits(intent, top_k)
+
+        if intent == "unknown":
+            fallback_reason = "Query intent was classified as unknown, so retrieval returned no policy or workflow context."
+            debug = {
+                "query": query,
+                "threshold": RETRIEVAL_THRESHOLD,
+                "top_score": 0.0,
+                "top_candidate": None,
+                "is_confident": False,
+                "fallback_reason": fallback_reason,
+                "intent_classification": intent_result,
+                "retrieval_strategy": "unknown_fallback",
+                "documents": [],
+                "chunks": [],
+                "workflows": [],
+                "selected_documents": [],
+                "selected_chunks": [],
+                "selected_workflows": [],
+            }
+            logger.info("retrieval_debug intent=%s query=%r strategy=unknown_fallback", intent, query)
+            return {
+                "chunks": [],
+                "workflows": [],
+                "debug": debug,
+                "confidence": {
+                    "threshold": RETRIEVAL_THRESHOLD,
+                    "top_score": 0.0,
+                    "is_confident": False,
+                    "has_retrieval_context": False,
+                    "fallback_reason": fallback_reason,
+                    "fallback_message": "I could not find a relevant match for this query in the uploaded company policies or workflows. Please contact HR for clarification.",
+                },
+            }
+
         documents = db.query(models.Document).order_by(models.Document.uploaded_at.desc()).all()
         doc_text_map = []
         for doc in documents:
@@ -314,10 +446,10 @@ def retrieve(query: str, top_k: int = 5):
             doc_text_map.append((doc, combined_text))
 
         ranked_docs_all = _score_documents(query, doc_text_map, min_score=0.0)
-        ranked_docs = [item for item in ranked_docs_all if item["score"] >= MIN_DOCUMENT_SCORE][: max(top_k, 5)]
+        ranked_docs = [item for item in ranked_docs_all if item["score"] >= MIN_DOCUMENT_SCORE][: max(retrieval_limits["doc_limit"], 1)]
 
         chunk_candidates = []
-        for item in ranked_docs or ranked_docs_all[: max(top_k, 5)]:
+        for item in ranked_docs or ranked_docs_all[: max(retrieval_limits["doc_limit"], 1)]:
             doc = item["document"]
             doc_chunks = (
                 db.query(models.DocumentChunk)
@@ -328,12 +460,16 @@ def retrieve(query: str, top_k: int = 5):
             chunk_candidates.extend(doc_chunks)
 
         chunk_ranked_all = _score_chunks(query, chunk_candidates, min_score=0.0)
-        chunks = [item for item in chunk_ranked_all if item["score"] >= MIN_CHUNK_SCORE][:top_k]
+        broadened_chunks = [item for item in chunk_ranked_all if item["score"] >= MIN_CHUNK_SCORE]
+        reranked_chunks = _rerank_candidates(query, broadened_chunks)
+        chunks = reranked_chunks[: retrieval_limits["chunk_limit"]]
 
         workflows = _search_workflows(db, query, limit=top_k)
         workflow_ranked_all = _workflow_scores(query, workflows, min_score=0.0)
+        broadened_workflows = [item for item in workflow_ranked_all if item["score"] >= MIN_WORKFLOW_SCORE]
+        reranked_workflows = _rerank_candidates(query, broadened_workflows, title_field="title")
         workflow_results = []
-        for item in [item for item in workflow_ranked_all if item["score"] >= MIN_WORKFLOW_SCORE][:top_k]:
+        for item in reranked_workflows[: retrieval_limits["workflow_limit"]]:
             wf = item["workflow"]
             workflow_results.append(
                 {
@@ -343,6 +479,11 @@ def retrieve(query: str, top_k: int = 5):
                     "description": wf.description,
                     "steps": [step.description for step in wf.workflow_steps],
                     "score": item["score"],
+                    "rerank_boost": item.get("rerank_boost"),
+                    "reranked_score": item.get("reranked_score"),
+                    "semantic_score": item.get("semantic_score"),
+                    "lexical_score": item.get("lexical_score"),
+                    "hybrid_score": item.get("hybrid_score"),
                 }
             )
 
@@ -375,6 +516,10 @@ def retrieve(query: str, top_k: int = 5):
             "top_candidate": top_candidate,
             "is_confident": is_confident,
             "fallback_reason": fallback_reason,
+            "intent_classification": intent_result,
+            "retrieval_strategy": f"{intent}_intent",
+            "workflow_count": len(workflow_results),
+            "chunk_count": len(chunks),
             "documents": [
                 {
                     "name": item["document"].filename,
@@ -395,9 +540,14 @@ def retrieve(query: str, top_k: int = 5):
                     "raw_score": item.get("raw_score"),
                     "text_overlap": item.get("text_overlap"),
                     "title_overlap": item.get("title_overlap"),
+                    "semantic_score": item.get("semantic_score"),
+                    "lexical_score": item.get("lexical_score"),
+                    "hybrid_score": item.get("hybrid_score"),
+                    "rerank_boost": item.get("rerank_boost"),
+                    "reranked_score": item.get("reranked_score"),
                     "snippet": item["content"][:280],
                 }
-                for item in chunk_ranked_all[:top_k]
+                for item in chunks
             ],
             "workflows": [
                 {
@@ -406,9 +556,14 @@ def retrieve(query: str, top_k: int = 5):
                     "raw_score": item.get("raw_score"),
                     "text_overlap": item.get("text_overlap"),
                     "title_overlap": item.get("title_overlap"),
-                    "snippet": item["text"][:280],
+                    "semantic_score": item.get("semantic_score"),
+                    "lexical_score": item.get("lexical_score"),
+                    "hybrid_score": item.get("hybrid_score"),
+                    "rerank_boost": item.get("rerank_boost"),
+                    "reranked_score": item.get("reranked_score"),
+                    "snippet": (item.get("text") or "")[:280],
                 }
-                for item in workflow_ranked_all[:top_k]
+                for item in workflow_results
             ],
             "selected_documents": [
                 {
@@ -425,6 +580,8 @@ def retrieve(query: str, top_k: int = 5):
                     "page_number": item.get("page_number"),
                     "score": item["score"],
                     "raw_score": item.get("raw_score"),
+                    "rerank_boost": item.get("rerank_boost"),
+                    "reranked_score": item.get("reranked_score"),
                 }
                 for item in chunks
             ],
@@ -433,6 +590,8 @@ def retrieve(query: str, top_k: int = 5):
                     "title": item["workflow"].name,
                     "score": item["score"],
                     "raw_score": item.get("raw_score"),
+                    "rerank_boost": item.get("rerank_boost"),
+                    "reranked_score": item.get("reranked_score"),
                 }
                 for item in workflow_results
             ],
