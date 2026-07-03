@@ -468,6 +468,7 @@ def _filter_and_validate_chunks(
     - accepted_chunks: list of high-quality chunks
     - rejected_chunks: list of rejected chunks with rejection reasons
     """
+    # Keep the filtering thresholds intentionally strict so weak matches do not leak into the grounding context.
     accepted = []
     rejected = []
     
@@ -626,6 +627,7 @@ def _retrieval_limits(intent: str, top_k: int) -> dict[str, int]:
 
 
 def retrieve(query: str, top_k: int = 5):
+    # The retrieval pipeline classifies intent first and then applies the same scoring rules to both policy chunks and workflows.
     ensure_schema()
     db = SessionLocal()
     try:

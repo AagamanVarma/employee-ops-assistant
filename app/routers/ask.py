@@ -5,6 +5,7 @@ from app.services.rag_pipeline import run_rag_pipeline, FALLBACK_MESSAGE
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
+# Disable template caching so the development server remains predictable during rendering.
 templates.env = Environment(loader=FileSystemLoader("templates"), cache_size=0)
 
 EXAMPLE_QUERIES = [

@@ -258,6 +258,7 @@ def run_rag_pipeline(query: str, top_k: int = 5) -> dict[str, Any]:
     context_blob = _build_grounding_context(chunks, workflows)
     prompt = _build_prompt(query, context_blob)
 
+    # The retry path is intentionally conservative: it only asks the model to synthesize from the retrieved context when grounding exists.
     llm_enabled = bool(_get_api_key())
     llm_called = False
     llm_output = None
@@ -296,7 +297,7 @@ def run_rag_pipeline(query: str, top_k: int = 5) -> dict[str, Any]:
                 answer_text = retry_text.strip()
                 llm_source = retry_source
 
-        # If after retry there's still no LLM answer, return a constructed combined answer
+        # If the model still cannot produce a grounded answer, fall back to a deterministic response built from the retrieved context.
         if not answer_text:
             if workflows or chunks:
                 answer_text = _build_combined_answer(chunks, workflows)
