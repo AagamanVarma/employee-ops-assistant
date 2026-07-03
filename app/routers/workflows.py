@@ -3,9 +3,13 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.orm import Session
+import logging
 from app import models
 from app.database import get_db, engine
 from app.routers.admin import get_current_admin
+from app.services.embeddings import emb_service
+
+logger = logging.getLogger(__name__)
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -93,6 +97,18 @@ def delete_workflow(request: Request, workflow_id: int, db: Session = Depends(ge
     wf = db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
     if not wf:
         raise HTTPException(status_code=404, detail="Workflow not found")
-    db.delete(wf)
-    db.commit()
+
+    # delete any Chroma workflow vectors if they exist
+    chroma_result = emb_service.delete_workflow_vectors(workflow_id)
+    logger.debug("Workflow %s Chroma cleanup result: %s", workflow_id, chroma_result)
+
+    try:
+        db.delete(wf)
+        db.commit()
+        logger.debug("Deleted workflow row %s and cascade-deleted its steps", workflow_id)
+    except Exception as exc:
+        db.rollback()
+        logger.error("Failed to delete workflow %s: %s", workflow_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to delete workflow")
+
     return RedirectResponse(url="/workflows", status_code=303)

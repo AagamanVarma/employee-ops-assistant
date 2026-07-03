@@ -124,9 +124,10 @@ def _build_prompt(query: str, context_blob: str) -> str:
         "Answer only from the provided context.\n"
         "Do not invent policies, workflow steps, or facts.\n"
         "If the provided context is insufficient, say that you need HR clarification.\n"
-        "Prefer workflow guidance for operational questions such as how to apply, submit, regularize, or request something.\n"
-        "Prefer concise policy explanation for informational questions about rules, eligibility, limits, or benefits.\n"
-        "When both policy and workflow context are provided, combine them naturally and keep the response concise.\n"
+        "For operational queries involving apply, submit, request, regularize, report, or complete a process, prioritize workflow guidance.\n"
+        "When workflow context is provided, present the steps in the same order as given and use numbered steps.\n"
+        "For informational queries about rules, eligibility, limits, or benefits, prefer concise policy explanation.\n"
+        "When both policy and workflow context are provided, answer with the workflow first and then add brief policy support.\n"
         "Use a professional, employee-friendly tone.\n"
         "Keep the response structured and easy to scan.\n"
         "If you cannot answer confidently from the context, write exactly: 'I do not have enough relevant context to answer this confidently.'\n\n"
@@ -153,21 +154,30 @@ def _build_workflow_answer(workflows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _build_chunk_answer(chunks: list[dict[str, Any]]) -> str:
-    if not chunks:
-        return ""
+def _format_policy_support(chunks: list[dict[str, Any]]) -> str:
     top_chunks = chunks[:2]
     sources = {chunk.get("citation", {}).get("document") or chunk.get("source") or "Document" for chunk in top_chunks}
-    lines = ["Based on the retrieved policy content, here is the guidance:"]
+    lines = ["Policy support:"]
     for chunk in top_chunks:
         content = (chunk.get("content") or "").strip()
         if not content:
             continue
         preview = content.replace("\n", " ").strip()
-        if len(preview) > 300:
-            preview = preview[:300].rsplit(" ", 1)[0] + "..."
+        if len(preview) > 260:
+            preview = preview[:260].rsplit(" ", 1)[0] + "..."
         lines.append(f"- {preview}")
-    lines.append(f"\nSource: {', '.join(sorted(sources))}")
+    if sources:
+        lines.append(f"Source: {', '.join(sorted(sources))}")
+    return "\n".join(lines)
+
+
+def _build_chunk_answer(chunks: list[dict[str, Any]]) -> str:
+    if not chunks:
+        return ""
+    lines = ["Based on the retrieved policy content, here is the guidance:"]
+    policy_support = _format_policy_support(chunks)
+    if policy_support:
+        lines.append(policy_support)
     return "\n".join(lines)
 
 
@@ -177,8 +187,10 @@ def _build_combined_answer(chunks: list[dict[str, Any]], workflows: list[dict[st
         return workflow_answer
     if not workflows:
         return _build_chunk_answer(chunks)
-    sources = {chunk.get("citation", {}).get("document") or chunk.get("source") or "Document" for chunk in chunks[:2]}
-    lines = [workflow_answer, "\nSupported by policy context from:", ", ".join(sorted(sources))]
+    lines = [workflow_answer, "", "Supporting policy context:"]
+    support_text = _format_policy_support(chunks)
+    if support_text:
+        lines.append(support_text)
     return "\n".join(lines)
 
 

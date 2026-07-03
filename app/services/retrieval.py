@@ -3,9 +3,12 @@
 This module ranks document chunks and workflows with hybrid lexical and
 semantic scoring, and returns debug data for inspection.
 """
+from __future__ import annotations
+
 import logging
 import os
 import re
+from typing import Any
 
 import numpy as np
 from dotenv import load_dotenv
@@ -380,6 +383,238 @@ def _rerank_candidates(query: str, candidates: list[dict], *, title_field: str =
     return sorted(reranked, key=lambda item: item["reranked_score"], reverse=True)
 
 
+def _entity_topic_overlap(query: str, text: str) -> dict[str, Any]:
+    """Evaluate entity/topic overlap between query and text.
+    
+    Returns:
+    - entity_overlap_score: 0.0 to 1.0, higher is better
+    - entities_found: list of matched entities
+    - has_significant_overlap: boolean
+    """
+    stop_terms = {
+        "what",
+        "is",
+        "are",
+        "how",
+        "do",
+        "i",
+        "me",
+        "my",
+        "can",
+        "should",
+        "about",
+        "tell",
+        "please",
+        "policy",
+        "role",
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "for",
+        "to",
+        "from",
+        "in",
+        "at",
+        "on",
+        "of",
+        "with",
+        "by",
+    }
+    query_norm = _normalize(query)
+    text_norm = _normalize(text)
+    
+    query_tokens = {token for token in _token_set(query_norm) if token not in stop_terms}
+    text_tokens = _token_set(text_norm)
+    
+    if not query_tokens or not text_tokens:
+        return {"entity_overlap_score": 0.0, "entities_found": [], "has_significant_overlap": False}
+    
+    direct_overlap = query_tokens & text_tokens
+    overlap_ratio = len(direct_overlap) / len(query_tokens) if query_tokens else 0.0
+    
+    contradictions = {
+        ("leave", "cricket"),
+        ("leave", "sports"),
+        ("wfh", "cricket"),
+        ("attendance", "cricket"),
+        ("leave", "game"),
+    }
+    
+    for term1, term2 in contradictions:
+        if (term1 in query_tokens and term2 in text_tokens) or (term2 in query_tokens and term1 in text_tokens):
+            return {"entity_overlap_score": 0.0, "entities_found": [], "has_significant_overlap": False}
+    
+    has_significant = overlap_ratio >= 0.25
+    return {
+        "entity_overlap_score": round(overlap_ratio, 3),
+        "entities_found": sorted(direct_overlap),
+        "has_significant_overlap": has_significant,
+    }
+
+
+def _filter_and_validate_chunks(
+    query: str, 
+    chunks: list[dict],
+    intent: str,
+    semantic_floor: float = 0.25,
+    lexical_floor: float = 0.18,
+    rerank_floor: float = 0.28,
+) -> tuple[list[dict], list[dict]]:
+    """Filter and validate chunks aggressively to reject weak context.
+    
+    Returns:
+    - accepted_chunks: list of high-quality chunks
+    - rejected_chunks: list of rejected chunks with rejection reasons
+    """
+    accepted = []
+    rejected = []
+    
+    for chunk in chunks:
+        reason = None
+        
+        # 1. Semantic score floor
+        semantic_score = float(chunk.get("semantic_score", 0.0))
+        if semantic_score < semantic_floor:
+            reason = f"Semantic score {semantic_score:.3f} below floor {semantic_floor}"
+            rejected.append({**chunk, "rejection_reason": reason})
+            continue
+        
+        # 2. Lexical score floor
+        lexical_score = float(chunk.get("lexical_score", 0.0))
+        if lexical_score < lexical_floor:
+            reason = f"Lexical score {lexical_score:.3f} below floor {lexical_floor}"
+            rejected.append({**chunk, "rejection_reason": reason})
+            continue
+        
+        # 3. Rerank score floor
+        rerank_score = float(chunk.get("reranked_score", chunk.get("score", 0.0)))
+        if rerank_score < rerank_floor:
+            reason = f"Rerank score {rerank_score:.3f} below floor {rerank_floor}"
+            rejected.append({**chunk, "rejection_reason": reason})
+            continue
+        
+        # 4. Entity/topic overlap validation
+        content = chunk.get("content", "")
+        overlap_result = _entity_topic_overlap(query, content)
+        if not overlap_result["has_significant_overlap"]:
+            reason = f"No significant entity overlap (score {overlap_result['entity_overlap_score']:.3f})"
+            rejected.append({**chunk, "rejection_reason": reason})
+            continue
+        
+        # 5. Content quality checks
+        if len(content.strip()) < 30:
+            reason = "Content too short (< 30 chars)"
+            rejected.append({**chunk, "rejection_reason": reason})
+            continue
+        
+        # 6. Avoid generic/boilerplate content
+        boilerplate_patterns = [
+            r"^(click here|see below|refer to|please note|important)",
+            r"(copyright|all rights reserved|disclaimer)",
+        ]
+        if any(re.search(pattern, content.lower()) for pattern in boilerplate_patterns):
+            if semantic_score < semantic_floor + 0.1 or lexical_score < lexical_floor + 0.1:
+                reason = "Boilerplate/generic content"
+                rejected.append({**chunk, "rejection_reason": reason})
+                continue
+        
+        # Add overlap score for accepted chunks
+        accepted.append({
+            **chunk,
+            "entity_overlap_score": overlap_result["entity_overlap_score"],
+            "entities_matched": overlap_result["entities_found"],
+        })
+    
+    return accepted, rejected
+
+
+def _filter_and_validate_workflows(
+    query: str,
+    workflows: list[dict],
+    intent: str,
+    semantic_floor: float = 0.22,
+    rerank_floor: float = 0.25,
+) -> tuple[list[dict], list[dict]]:
+    """Filter and validate workflows aggressively.
+    
+    Returns:
+    - accepted_workflows: list of high-quality workflows
+    - rejected_workflows: list of rejected workflows with rejection reasons
+    """
+    accepted = []
+    rejected = []
+    
+    for workflow in workflows:
+        reason = None
+        
+        # 1. Semantic score floor for workflows
+        semantic_score = float(workflow.get("semantic_score", 0.0))
+        if intent == "workflow":
+            min_semantic = 0.18
+            min_rerank = 0.22
+        else:
+            min_semantic = semantic_floor
+            min_rerank = rerank_floor
+
+        if semantic_score < min_semantic:
+            reason = f"Semantic score {semantic_score:.3f} below floor {min_semantic}"
+            rejected.append({**workflow, "rejection_reason": reason})
+            continue
+        
+        # 2. Rerank score floor
+        rerank_score = float(workflow.get("reranked_score", workflow.get("score", 0.0)))
+        if rerank_score < min_rerank:
+            reason = f"Rerank score {rerank_score:.3f} below floor {min_rerank}"
+            rejected.append({**workflow, "rejection_reason": reason})
+            continue
+        
+        # 3. Entity overlap on workflow title, description, and steps
+        title = workflow.get("title") or ""
+        if not title and workflow.get("workflow") is not None:
+            title = getattr(workflow["workflow"], "name", "") or ""
+        description = workflow.get("description", "")
+        steps = [step for step in workflow.get("steps", []) if (step or "").strip()]
+        combined = " ".join([title, description, " ".join(steps)]).strip()
+        overlap_result = _entity_topic_overlap(query, combined)
+        hybrid_score = float(workflow.get("hybrid_score", workflow.get("score", 0.0)))
+
+        if intent == "workflow":
+            if not overlap_result["has_significant_overlap"] and semantic_score < 0.50 and hybrid_score < 0.45:
+                reason = f"No significant workflow overlap (score {overlap_result['entity_overlap_score']:.3f})"
+                rejected.append({**workflow, "rejection_reason": reason})
+                continue
+        else:
+            if not overlap_result["has_significant_overlap"]:
+                reason = f"No significant workflow overlap (score {overlap_result['entity_overlap_score']:.3f})"
+                rejected.append({**workflow, "rejection_reason": reason})
+                continue
+
+        # 4. Intent compatibility: suppress workflows for policy queries
+        if intent == "policy":
+            title_overlap = _entity_topic_overlap(query, title)
+            if not title_overlap["has_significant_overlap"]:
+                reason = f"Policy query: workflow title has weak overlap (score {title_overlap['entity_overlap_score']:.3f})"
+                rejected.append({**workflow, "rejection_reason": reason})
+                continue
+        
+        # 5. Require meaningful steps if workflow is accepted
+        if not steps or all(not (step or "").strip() for step in steps):
+            if semantic_score < min_semantic + 0.1:
+                reason = "Workflow has no meaningful steps and weak semantic match"
+                rejected.append({**workflow, "rejection_reason": reason})
+                continue
+        
+        accepted.append({
+            **workflow,
+            "entity_overlap_score": overlap_result["entity_overlap_score"],
+            "entities_matched": overlap_result["entities_found"],
+        })
+    
+    return accepted, rejected
+
+
 def _retrieval_limits(intent: str, top_k: int) -> dict[str, int]:
     if intent == "workflow":
         return {"doc_limit": 2, "chunk_limit": 2, "workflow_limit": max(top_k, 3)}
@@ -462,14 +697,21 @@ def retrieve(query: str, top_k: int = 5):
         chunk_ranked_all = _score_chunks(query, chunk_candidates, min_score=0.0)
         broadened_chunks = [item for item in chunk_ranked_all if item["score"] >= MIN_CHUNK_SCORE]
         reranked_chunks = _rerank_candidates(query, broadened_chunks)
-        chunks = reranked_chunks[: retrieval_limits["chunk_limit"]]
+        
+        # Apply strict filtering to reject weak chunks
+        accepted_chunks, rejected_chunks = _filter_and_validate_chunks(query, reranked_chunks, intent)
+        chunks = accepted_chunks[: retrieval_limits["chunk_limit"]]
 
         workflows = _search_workflows(db, query, limit=top_k)
         workflow_ranked_all = _workflow_scores(query, workflows, min_score=0.0)
         broadened_workflows = [item for item in workflow_ranked_all if item["score"] >= MIN_WORKFLOW_SCORE]
         reranked_workflows = _rerank_candidates(query, broadened_workflows, title_field="title")
+        
+        # Apply strict filtering to workflows
+        accepted_workflow_items, rejected_workflow_items = _filter_and_validate_workflows(query, reranked_workflows, intent)
+        
         workflow_results = []
-        for item in reranked_workflows[: retrieval_limits["workflow_limit"]]:
+        for item in accepted_workflow_items[: retrieval_limits["workflow_limit"]]:
             wf = item["workflow"]
             workflow_results.append(
                 {
@@ -564,6 +806,27 @@ def retrieve(query: str, top_k: int = 5):
                     "snippet": (item.get("text") or "")[:280],
                 }
                 for item in workflow_results
+            ],
+            "rejected_chunks": [
+                {
+                    "source": item.get("source"),
+                    "section_title": item.get("section_title"),
+                    "score": item.get("score"),
+                    "semantic_score": item.get("semantic_score"),
+                    "lexical_score": item.get("lexical_score"),
+                    "rejection_reason": item.get("rejection_reason"),
+                    "snippet": (item.get("content") or "")[:200],
+                }
+                for item in rejected_chunks
+            ],
+            "rejected_workflows": [
+                {
+                    "title": item.get("title"),
+                    "score": item.get("score"),
+                    "semantic_score": item.get("semantic_score"),
+                    "rejection_reason": item.get("rejection_reason"),
+                }
+                for item in rejected_workflow_items
             ],
             "selected_documents": [
                 {

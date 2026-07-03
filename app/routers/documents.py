@@ -5,11 +5,15 @@ from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.orm import Session
 from pathlib import Path
 import shutil
+import logging
 
 from app.database import get_db, engine
 from app import models
 from app.routers.admin import get_current_admin
 from app.services.document_processor import process_document_background
+from app.services.embeddings import emb_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
@@ -75,13 +79,41 @@ def delete_document(request: Request, doc_id: int, db: Session = Depends(get_db)
     doc = db.query(models.Document).filter(models.Document.id == doc_id).first()
     if not doc:
         return RedirectResponse(url="/admin/documents")
-    # delete file
+
+    # delete physical file safely
     try:
-        Path(doc.filepath).unlink(missing_ok=True)
-    except Exception:
-        pass
-    # delete chunks
-    db.query(models.DocumentChunk).filter(models.DocumentChunk.document_id == doc.id).delete()
-    db.delete(doc)
-    db.commit()
+        file_path = Path(doc.filepath)
+        if file_path.exists():
+            file_path.unlink()
+            logger.debug("Deleted document file %s", file_path)
+        else:
+            logger.debug("Document file not found during deletion: %s", file_path)
+    except Exception as exc:
+        logger.warning("Failed to delete document file %s: %s", doc.filepath, exc, exc_info=True)
+
+    # delete related Chroma vectors if any
+    chroma_result = emb_service.delete_document_vectors(doc.id)
+    logger.debug(
+        "Document %s Chroma cleanup result: %s",
+        doc.id,
+        chroma_result,
+    )
+
+    # delete related chunks
+    try:
+        deleted_chunks = db.query(models.DocumentChunk).filter(models.DocumentChunk.document_id == doc.id).delete()
+        logger.debug("Deleted %d document chunk rows for document %s", deleted_chunks, doc.id)
+    except Exception as exc:
+        logger.warning("Failed to delete chunks for document %s: %s", doc.id, exc, exc_info=True)
+
+    # delete document row
+    try:
+        db.delete(doc)
+        db.commit()
+        logger.debug("Deleted document row %s", doc.id)
+    except Exception as exc:
+        db.rollback()
+        logger.error("Failed to delete document row %s: %s", doc.id, exc, exc_info=True)
+        return RedirectResponse(url="/admin/documents", status_code=303)
+
     return RedirectResponse(url="/admin/documents", status_code=303)

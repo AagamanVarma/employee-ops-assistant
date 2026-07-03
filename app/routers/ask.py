@@ -9,9 +9,9 @@ templates.env = Environment(loader=FileSystemLoader("templates"), cache_size=0)
 
 EXAMPLE_QUERIES = [
     "How do I regularize attendance?",
-    "How many sick leaves can interns take?",
+    "How many apply leave?",
     "How do I fill timesheet?",
-    "What is the leave policy for interns?",
+    "What is the Work From Home policy?",
 ]
 
 
