@@ -49,46 +49,90 @@ def _build_citations(chunks: list[dict[str, Any]], workflows: list[dict[str, Any
     return citations
 
 
-def _build_grounding_context(chunks: list[dict[str, Any]], workflows: list[dict[str, Any]]) -> str:
-    parts: list[str] = []
+def _dedupe_context_items(items: list[dict[str, Any]], key_field: str) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    unique_items: list[dict[str, Any]] = []
+    for item in items:
+        key = (item.get(key_field) or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique_items.append(item)
+    return unique_items
 
-    for index, chunk in enumerate(chunks, start=1):
+
+def _clean_text(text: str, *, max_chars: int = 320) -> str:
+    cleaned = re.sub(r"\s+", " ", (text or "")).strip()
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return cleaned[: max_chars - 3].rsplit(" ", 1)[0] + "..."
+
+
+def _build_policy_context(chunks: list[dict[str, Any]]) -> str:
+    if not chunks:
+        return ""
+    unique_chunks = _dedupe_context_items(chunks, "content")
+    sections: list[str] = []
+    for index, chunk in enumerate(unique_chunks[:3], start=1):
         citation = chunk.get("citation") or {}
         source = citation.get("document") or chunk.get("source") or "Unknown document"
-        page = citation.get("page")
-        header = f"Policy Evidence {index}: {source}"
-        if page:
-            header = f"{header} (Page {page})"
-        parts.append(f"{header}\n{chunk.get('content', '').strip()}")
+        section = citation.get("section") or chunk.get("section_title") or ""
+        content = _clean_text(chunk.get("content") or "")
+        line = f"{index}. {source}"
+        if section:
+            line = f"{line} | Section: {section}"
+        sections.append(f"{line}\n   - {content}")
+    return "POLICY CONTEXT\n" + "\n".join(sections)
 
-    for index, workflow in enumerate(workflows, start=1):
+
+def _build_workflow_context(workflows: list[dict[str, Any]]) -> str:
+    if not workflows:
+        return ""
+    unique_workflows = _dedupe_context_items(workflows, "title")
+    sections: list[str] = []
+    for index, workflow in enumerate(unique_workflows[:2], start=1):
         title = workflow.get("title") or "Workflow"
-        description = workflow.get("description") or ""
-        steps = workflow.get("steps") or []
-        steps_text = "\n".join(f"- {step}" for step in steps)
-        parts.append(
-            f"Workflow Evidence {index}: {title}\nDescription: {description}\nSteps:\n{steps_text}"
-        )
+        description = _clean_text(workflow.get("description") or "")
+        steps = [step for step in workflow.get("steps") or [] if (step or "").strip()]
+        steps_text = "\n".join(f"   {step_index}. {step}" for step_index, step in enumerate(steps[:5], start=1))
+        section_lines = [f"{index}. Workflow: {title}"]
+        if description:
+            section_lines.append(f"   Description: {description}")
+        if steps_text:
+            section_lines.append("   Steps:")
+            section_lines.append(steps_text)
+        sections.append("\n".join(section_lines))
+    return "WORKFLOW CONTEXT\n" + "\n".join(sections)
 
+
+def _build_grounding_context(chunks: list[dict[str, Any]], workflows: list[dict[str, Any]]) -> str:
+    policy_context = _build_policy_context(chunks)
+    workflow_context = _build_workflow_context(workflows)
+    parts: list[str] = []
+    if policy_context:
+        parts.append(policy_context)
+    if workflow_context:
+        parts.append(workflow_context)
+    if not parts:
+        return ""
     return "\n\n".join(parts)
 
 
-def _build_prompt(query: str) -> str:
+def _build_prompt(query: str, context_blob: str) -> str:
     return (
         "You are a professional enterprise assistant.\n"
-        "Use only the retrieved documents and workflows as context for your answer.\n"
-        "Do not invent policies, workflow steps, or information not present in the retrieved context.\n"
-        "For workflow-based queries, provide clear step-by-step guidance in natural language.\n"
-        "For policy-based queries, summarize the relevant policy points clearly and professionally.\n"
-        "If both documents and workflows are available, combine them into a coherent evidence-based answer.\n"
-        "Do not use overly technical wording like 'grounded summary'.\n"
-        "If you cannot answer from the retrieved context, write exactly: 'I do not have enough relevant context to answer this confidently.'\n\n"
+        "Answer only from the provided context.\n"
+        "Do not invent policies, workflow steps, or facts.\n"
+        "If the provided context is insufficient, say that you need HR clarification.\n"
+        "Prefer workflow guidance for operational questions such as how to apply, submit, regularize, or request something.\n"
+        "Prefer concise policy explanation for informational questions about rules, eligibility, limits, or benefits.\n"
+        "When both policy and workflow context are provided, combine them naturally and keep the response concise.\n"
+        "Use a professional, employee-friendly tone.\n"
+        "Keep the response structured and easy to scan.\n"
+        "If you cannot answer confidently from the context, write exactly: 'I do not have enough relevant context to answer this confidently.'\n\n"
         f"Employee question: {query}\n\n"
-        "Context: {query}\n\n"
-        "Answer in plain text, with a professional enterprise tone.\n"
-        "If the answer is workflow-based, prefer a numbered list of steps.\n"
-        "If the answer is policy-based, keep it concise and precise.\n"
-        "If you cannot answer confidently from the retrieved context, write: 'I do not have enough relevant context to answer this confidently.'"
+        f"Context:\n{context_blob}\n\n"
+        "Answer in plain text with short paragraphs or numbered steps where appropriate."
     )
 
 
@@ -200,7 +244,7 @@ def run_rag_pipeline(query: str, top_k: int = 5) -> dict[str, Any]:
         }
 
     context_blob = _build_grounding_context(chunks, workflows)
-    prompt = _build_prompt(query)
+    prompt = _build_prompt(query, context_blob)
 
     llm_enabled = bool(_get_api_key())
     llm_called = False
