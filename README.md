@@ -5,7 +5,7 @@ An internal Employee Operations Assistant for finding policies and workflows qui
 ## Features
 
 - **Admin Panel** - Manage policies and workflows securely with login
-- **Policy Upload** - Upload PDF policy documents with visual progress tracking
+- **Policy Upload** - Upload PDF policy documents 
 - **Semantic Chunking** - Documents are split into meaningful semantic chunks (not random fragments) for better retrieval
 - **Smart Search** - Ask questions and get relevant policies and workflows instantly
 - **Hybrid Retrieval** - Combines both keyword matching and semantic similarity for accurate results
