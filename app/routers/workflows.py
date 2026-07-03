@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request, Form, HTTPException
+from fastapi import APIRouter, Depends, Request, Form, HTTPException, BackgroundTasks
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
@@ -54,6 +54,8 @@ def create_workflow(request: Request, name: str = Form(...), description: str = 
     if wf:
         wf.description = description
         wf.steps = "\n".join(steps_list)
+        if not wf.vector_id:
+            wf.vector_id = f"workflow_{wf.id}"
         wf.workflow_steps.clear()
         db.flush()
     else:
@@ -64,6 +66,7 @@ def create_workflow(request: Request, name: str = Form(...), description: str = 
         )
         db.add(wf)
         db.flush()
+        wf.vector_id = f"workflow_{wf.id}"
 
     for index, step_text in enumerate(steps_list, start=1):
         wf_step = models.WorkflowStep(
@@ -91,16 +94,19 @@ def view_workflow(workflow_id: int, request: Request, db: Session = Depends(get_
 
 
 @router.post("/workflows/{workflow_id}/delete")
-def delete_workflow(request: Request, workflow_id: int, db: Session = Depends(get_db)):
+def delete_workflow(
+    request: Request,
+    workflow_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     if not get_current_admin(request):
         return RedirectResponse(url="/admin/login", status_code=303)
     wf = db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
     if not wf:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
-    # delete any Chroma workflow vectors if they exist
-    chroma_result = emb_service.delete_workflow_vectors(workflow_id)
-    logger.debug("Workflow %s Chroma cleanup result: %s", workflow_id, chroma_result)
+    vector_ids = [wf.vector_id] if wf.vector_id else []
 
     try:
         db.delete(wf)
@@ -110,5 +116,21 @@ def delete_workflow(request: Request, workflow_id: int, db: Session = Depends(ge
         db.rollback()
         logger.error("Failed to delete workflow %s: %s", workflow_id, exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to delete workflow")
+
+    def _cleanup_workflow_vectors(ids: list[str]):
+        try:
+            result = emb_service.delete_vector_ids(ids)
+            logger.debug("Background Chroma cleanup finished for workflow %s ids=%s: %s", workflow_id, ids, result)
+        except Exception as exc:
+            logger.warning(
+                "Background Chroma cleanup failed for workflow %s ids=%s: %s",
+                workflow_id,
+                ids,
+                exc,
+                exc_info=True,
+            )
+
+    background_tasks.add_task(_cleanup_workflow_vectors, vector_ids)
+    logger.debug("Scheduled Chroma cleanup background task for workflow %s", workflow_id)
 
     return RedirectResponse(url="/workflows", status_code=303)

@@ -11,6 +11,7 @@ class Workflow(Base):
     name = Column(String(255), unique=True, index=True, nullable=False)
     description = Column(Text, nullable=True)
     steps = Column(Text, nullable=False, default="")
+    vector_id = Column(String(512), unique=True, index=True, nullable=True)
     workflow_steps = relationship(
         "WorkflowStep",
         back_populates="workflow",
@@ -56,6 +57,7 @@ class DocumentChunk(Base):
     section_title = Column(String(512), nullable=True)
     page_number = Column(Integer, nullable=True)
     chunk_index = Column(Integer, nullable=False)
+    vector_id = Column(String(512), unique=True, index=True, nullable=True)
     chunk_text = Column(Text, nullable=False)
 
     document = relationship("Document", backref="chunks")

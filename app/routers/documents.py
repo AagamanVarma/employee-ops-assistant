@@ -73,14 +73,39 @@ def upload_document(
 
 
 @router.post("/admin/documents/delete/{doc_id}")
-def delete_document(request: Request, doc_id: int, db: Session = Depends(get_db)):
+def delete_document(
+    request: Request,
+    doc_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     if not get_current_admin(request):
         return RedirectResponse(url="/admin/login")
     doc = db.query(models.Document).filter(models.Document.id == doc_id).first()
     if not doc:
         return RedirectResponse(url="/admin/documents")
 
-    # delete physical file safely
+    # collect vector IDs for precise Chroma cleanup before deleting DB rows
+    vector_ids = [
+        row.vector_id
+        for (row,) in db.query(models.DocumentChunk.vector_id)
+        .filter(models.DocumentChunk.document_id == doc.id)
+        .all()
+        if row
+    ]
+
+    # delete related chunks and document row quickly
+    try:
+        db.query(models.DocumentChunk).filter(models.DocumentChunk.document_id == doc.id).delete()
+        db.delete(doc)
+        db.commit()
+        logger.debug("Deleted document %s and its chunks", doc.id)
+    except Exception as exc:
+        db.rollback()
+        logger.error("Failed to delete document %s or its chunks: %s", doc.id, exc, exc_info=True)
+        return RedirectResponse(url="/admin/documents", status_code=303)
+
+    # delete physical file safely after database commit
     try:
         file_path = Path(doc.filepath)
         if file_path.exists():
@@ -91,29 +116,21 @@ def delete_document(request: Request, doc_id: int, db: Session = Depends(get_db)
     except Exception as exc:
         logger.warning("Failed to delete document file %s: %s", doc.filepath, exc, exc_info=True)
 
-    # delete related Chroma vectors if any
-    chroma_result = emb_service.delete_document_vectors(doc.id)
-    logger.debug(
-        "Document %s Chroma cleanup result: %s",
-        doc.id,
-        chroma_result,
-    )
+    # schedule Chroma cleanup in FastAPI background
+    def _cleanup_doc_vectors(ids: list[str]):
+        try:
+            result = emb_service.delete_vector_ids(ids)
+            logger.debug("Background Chroma cleanup finished for document %s ids=%s: %s", doc.id, ids, result)
+        except Exception as exc:
+            logger.warning(
+                "Background Chroma cleanup failed for document %s ids=%s: %s",
+                doc.id,
+                ids,
+                exc,
+                exc_info=True,
+            )
 
-    # delete related chunks
-    try:
-        deleted_chunks = db.query(models.DocumentChunk).filter(models.DocumentChunk.document_id == doc.id).delete()
-        logger.debug("Deleted %d document chunk rows for document %s", deleted_chunks, doc.id)
-    except Exception as exc:
-        logger.warning("Failed to delete chunks for document %s: %s", doc.id, exc, exc_info=True)
-
-    # delete document row
-    try:
-        db.delete(doc)
-        db.commit()
-        logger.debug("Deleted document row %s", doc.id)
-    except Exception as exc:
-        db.rollback()
-        logger.error("Failed to delete document row %s: %s", doc.id, exc, exc_info=True)
-        return RedirectResponse(url="/admin/documents", status_code=303)
+    background_tasks.add_task(_cleanup_doc_vectors, vector_ids)
+    logger.debug("Scheduled Chroma cleanup background task for document %s", doc.id)
 
     return RedirectResponse(url="/admin/documents", status_code=303)

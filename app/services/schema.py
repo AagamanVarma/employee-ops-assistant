@@ -15,3 +15,10 @@ def ensure_schema():
             conn.exec_driver_sql("ALTER TABLE document_chunks ADD COLUMN section_title TEXT")
         if "page_number" not in existing:
             conn.exec_driver_sql("ALTER TABLE document_chunks ADD COLUMN page_number INTEGER")
+        if "vector_id" not in existing:
+            conn.exec_driver_sql("ALTER TABLE document_chunks ADD COLUMN vector_id TEXT")
+
+    existing_workflow = _existing_columns("workflows")
+    with engine.begin() as conn:
+        if "vector_id" not in existing_workflow:
+            conn.exec_driver_sql("ALTER TABLE workflows ADD COLUMN vector_id TEXT")

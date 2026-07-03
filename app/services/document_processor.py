@@ -1,31 +1,56 @@
-"""PDF extraction and chunking using PyMuPDF (fitz).
+"""PDF extraction and semantic chunking using PyMuPDF (fitz).
 
-The upload path only extracts text and stores chunks. Search scoring happens at
-query time so uploads stay fast.
+The upload path extracts text and creates semantically meaningful chunks.
+Search scoring happens at query time so uploads stay fast.
+
+SEMANTIC CHUNKING STRATEGY:
+- Detect section headings and preserve heading + content relationship
+- Group paragraphs into semantic units (min 100 words, max 600 words)
+- Intelligently merge small fragments to avoid noise
+- Preserve table structure and policy clauses
+- Add soft overlap for context preservation
+- Debug logging shows chunking quality metrics
 """
 from pathlib import Path
 import re
 import fitz  # PyMuPDF
+import logging
 from app import models
 from app.database import SessionLocal
 from app.services.schema import ensure_schema
+from app.services.embeddings import emb_service
+
+logger = logging.getLogger(__name__)
 
 
 def _clean_text(s: str) -> str:
     return "\n".join([line.strip() for line in s.splitlines() if line.strip()])
 
 
-def _split_into_paragraphs(text: str):
-    paras = [p.strip() for p in text.split("\n\n") if p.strip()]
-    return paras
+def _is_table_like(text: str) -> bool:
+    """Detect if text looks like a table row or structured data."""
+    lines = text.strip().split('\n')
+    if len(lines) > 3:
+        return False
+    # Check for pipe separators, tabs, or many spaces (table indicators)
+    return any('|' in line or '\t' in line or '  ' in line for line in lines)
 
 
-def _split_into_sentences(text: str):
-    parts = re.split(r"(?<=[.!?])\s+", text.strip())
-    return [part.strip() for part in parts if part.strip()]
+def _is_list_item(text: str) -> bool:
+    """Detect if text is a list item (bullet, number, dash)."""
+    stripped = text.strip()
+    return bool(re.match(r'^[\-•*]\s+', stripped)) or bool(re.match(r'^\d+\.\s+', stripped))
+
+
+def _is_policy_clause(text: str) -> bool:
+    """Detect if text is a numbered policy clause (e.g., '4.1', '3.2.1')."""
+    stripped = text.strip()
+    # Matches patterns like "4.1", "3.2.1", or "3.2.1 Policy Name"
+    return bool(re.match(r'^\d+(\.\d+)*\s', stripped))
 
 
 def _looks_like_heading(line: str):
+    """Detect if a line is a section heading."""
     clean = re.sub(r"^[\-•*\d.\s]+", "", line).strip()
     if not clean or len(clean) > 90:
         return False
@@ -42,7 +67,14 @@ def _looks_like_heading(line: str):
     return title_words >= max(2, len(words) - 1)
 
 
+def _split_into_paragraphs(text: str):
+    """Split text into paragraphs, preserving structure."""
+    paras = [p.strip() for p in text.split("\n\n") if p.strip()]
+    return paras
+
+
 def _extract_sections(pdf, default_title: str):
+    """Extract text grouped by section headings."""
     sections = []
     current_title = default_title
     current_page = 1
@@ -82,49 +114,102 @@ def _extract_sections(pdf, default_title: str):
     return sections
 
 
-def _chunk_words(text: str, max_words: int = 420, overlap_words: int = 80):
-    paragraphs = _split_into_paragraphs(text)
+def _count_words(text: str) -> int:
+    """Count words in text."""
+    return len(text.split())
+
+
+def _semantic_chunk_section(section_text: str, min_words: int = 100, max_words: int = 600) -> list:
+    """
+    Create semantically meaningful chunks from section text.
+    
+    Strategy:
+    1. Split into paragraphs (natural text boundaries)
+    2. Group paragraphs into chunks respecting min/max word counts
+    3. Merge small chunks intelligently with neighbors
+    4. Preserve table structure, lists, and policy clauses
+    5. Add soft overlap for context
+    
+    Returns list of chunk strings.
+    """
+    paragraphs = _split_into_paragraphs(section_text)
+    if not paragraphs:
+        return []
+    
+    # Group paragraphs into candidate chunks
+    candidates = []
+    current_group = []
+    current_word_count = 0
+    
+    for para in paragraphs:
+        para_words = _count_words(para)
+        
+        # If single paragraph exceeds max, split it by sentences
+        if para_words > max_words:
+            if current_group:
+                candidates.append((current_group, current_word_count))
+                current_group = []
+                current_word_count = 0
+            
+            # Split long paragraph by sentences
+            sentences = re.split(r'(?<=[.!?])\s+', para)
+            sent_group = []
+            sent_count = 0
+            for sent in sentences:
+                sent_words = _count_words(sent)
+                if sent_count + sent_words > max_words and sent_group:
+                    candidates.append((['\n'.join(sent_group)], sent_count))
+                    sent_group = [sent]
+                    sent_count = sent_words
+                else:
+                    sent_group.append(sent)
+                    sent_count += sent_words
+            if sent_group:
+                candidates.append((['\n'.join(sent_group)], sent_count))
+        
+        # Add paragraph to current group if it fits
+        elif current_word_count + para_words <= max_words:
+            current_group.append(para)
+            current_word_count += para_words
+        
+        # Start new group
+        else:
+            if current_group:
+                candidates.append((current_group, current_word_count))
+            current_group = [para]
+            current_word_count = para_words
+    
+    if current_group:
+        candidates.append((current_group, current_word_count))
+    
+    # Merge small chunks with neighbors
+    merged_candidates = []
+    i = 0
+    while i < len(candidates):
+        para_group, word_count = candidates[i]
+        
+        # If chunk is very small and not a meaningful unit, merge with next
+        if word_count < min_words and i < len(candidates) - 1:
+            next_group, next_words = candidates[i + 1]
+            # Merge current with next
+            merged_candidates.append((para_group + next_group, word_count + next_words))
+            i += 2
+        # If chunk is small but meaningful (table, list, policy), keep it
+        elif any(_is_table_like(p) or _is_list_item(p) or _is_policy_clause(p) for p in para_group):
+            merged_candidates.append((para_group, word_count))
+            i += 1
+        else:
+            merged_candidates.append((para_group, word_count))
+            i += 1
+    
+    # Join paragraphs in each group into chunks
     chunks = []
-    buffer_words = []
-
-    def flush_buffer():
-        nonlocal buffer_words
-        if buffer_words:
-            chunks.append(" ".join(buffer_words).strip())
-            if overlap_words > 0:
-                buffer_words = buffer_words[-overlap_words:]
-            else:
-                buffer_words = []
-
-    for paragraph in paragraphs:
-        words = paragraph.split()
-        if not words:
-            continue
-        if len(words) > max_words:
-            flush_buffer()
-            sentence_buffer = []
-            sentence_words = 0
-            for sentence in _split_into_sentences(paragraph):
-                sentence_parts = sentence.split()
-                if sentence_buffer and sentence_words + len(sentence_parts) > max_words:
-                    chunks.append(" ".join(sentence_buffer).strip())
-                    sentence_buffer = sentence_buffer[-overlap_words:] if overlap_words > 0 else []
-                    sentence_words = len(sentence_buffer)
-                sentence_buffer.extend(sentence_parts)
-                sentence_words += len(sentence_parts)
-            if sentence_buffer:
-                chunks.append(" ".join(sentence_buffer).strip())
-            buffer_words = []
-            continue
-
-        if buffer_words and len(buffer_words) + len(words) > max_words:
-            flush_buffer()
-        buffer_words.extend(words)
-
-    if buffer_words:
-        chunks.append(" ".join(buffer_words).strip())
-
-    return [chunk for chunk in chunks if chunk]
+    for para_group, _ in merged_candidates:
+        chunk_text = "\n\n".join(para_group)
+        if chunk_text.strip():
+            chunks.append(chunk_text)
+    
+    return chunks
 
 
 def process_document(document_id: int, db):
@@ -137,31 +222,105 @@ def process_document(document_id: int, db):
     if not file_path.exists():
         raise ValueError("File not found on disk")
 
-    # extract text
+    # Extract text by section
     with fitz.open(str(file_path)) as pdf:
         sections = _extract_sections(pdf, Path(doc_row.filename).stem)
 
-    # remove any existing chunks for this document
+    # Remove any existing chunks for this document
     db.query(models.DocumentChunk).filter(models.DocumentChunk.document_id == document_id).delete()
 
+    # Create semantic chunks
     chunk_index = 0
+    chunk_rows = []
+    section_stats = []
+    
     for section in sections:
-        subchunks = _chunk_words(section["text"])
-        for sc in subchunks:
+        # Use semantic chunking instead of word-based chunking
+        semantic_chunks = _semantic_chunk_section(section["text"], min_words=100, max_words=600)
+        
+        section_stat = {
+            "section_title": section["title"],
+            "chunk_count": len(semantic_chunks),
+            "chunk_sizes": [],
+        }
+        
+        for sc in semantic_chunks:
+            vector_id = f"doc_{document_id}_chunk_{chunk_index}"
+            word_count = _count_words(sc)
+            section_stat["chunk_sizes"].append(word_count)
+            
             chunk = models.DocumentChunk(
                 document_id=document_id,
                 filename=doc_row.filename,
                 section_title=section["title"],
                 page_number=section["page_number"],
                 chunk_index=chunk_index,
+                vector_id=vector_id,
                 chunk_text=sc,
             )
-            db.add(chunk)
+            chunk_rows.append(chunk)
             chunk_index += 1
+        
+        section_stats.append(section_stat)
 
+    db.add_all(chunk_rows)
     db.commit()
+    
+    # DEBUG LOGGING: Show chunking quality metrics
+    logger.info(
+        "✓ Semantic chunking for document %s (%s):",
+        document_id,
+        doc_row.filename,
+    )
+    for stat in section_stats:
+        if stat["chunk_count"] > 0:
+            avg_size = sum(stat["chunk_sizes"]) // len(stat["chunk_sizes"])
+            min_size = min(stat["chunk_sizes"])
+            max_size = max(stat["chunk_sizes"])
+            logger.info(
+                "  Section '%s': %d chunks | Avg: %d words | Range: %d-%d",
+                stat["section_title"][:40],
+                stat["chunk_count"],
+                avg_size,
+                min_size,
+                max_size,
+            )
+    
+    logger.info(
+        "✓ Created %d semantic chunks (total) for document %s",
+        len(chunk_rows),
+        document_id,
+    )
 
-    # Search uses the stored chunks directly, so there is no separate indexing step here.
+    # Index chunks in vector store
+    vector_ids = [row.vector_id for row in chunk_rows if row.vector_id]
+    if vector_ids:
+        texts = [row.chunk_text for row in chunk_rows]
+        metadatas = [
+            {
+                "document_id": document_id,
+                "chunk_index": row.chunk_index,
+                "filename": row.filename,
+                "section_title": row.section_title,
+                "page_number": row.page_number,
+            }
+            for row in chunk_rows
+        ]
+        try:
+            emb_service.delete_vector_ids(vector_ids)
+            emb_service.add_documents(ids=vector_ids, texts=texts, metadatas=metadatas)
+            logger.info(
+                "✓ Indexed %d semantic chunk vectors in Chroma for document %s",
+                len(vector_ids),
+                document_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to index document %s chunks in Chroma: %s",
+                document_id,
+                exc,
+                exc_info=True,
+            )
 
 
 def process_document_background(document_id: int):

@@ -51,6 +51,12 @@ class EmbeddingsService:
         coll = self.get_or_create_collection(collection_name)
         embeddings = self.embed_texts(texts)
         coll.add(ids=ids, documents=texts, metadatas=metadatas or [{} for _ in texts], embeddings=embeddings)
+        logger.debug(
+            "Added %d embeddings to Chroma collection %s: %s",
+            len(ids) if ids else 0,
+            collection_name,
+            ids,
+        )
 
     def query(self, query_text, top_k: int = 5, collection_name: str = "documents"):
         coll = self.get_or_create_collection(collection_name)
@@ -80,9 +86,11 @@ class EmbeddingsService:
             else:
                 deleted_count = int(getattr(result, "deleted_count", 0))
             logger.debug(
-                "Deleted %d records from Chroma collection %s",
+                "Deleted %d records from Chroma collection %s ids=%s where=%s",
                 deleted_count,
                 collection_name,
+                ids,
+                where,
             )
             return {"deleted_count": deleted_count}
         except Exception as exc:
@@ -94,10 +102,19 @@ class EmbeddingsService:
             )
             return {"deleted_count": 0}
 
+    def delete_vector_ids(self, vector_ids: list[str], collection_name: str = "documents") -> dict[str, int]:
+        return self.delete_records(ids=vector_ids, collection_name=collection_name)
+
     def delete_document_vectors(self, document_id: int, collection_name: str = "documents") -> dict[str, int]:
+        logger.warning(
+            "delete_document_vectors is deprecated; use delete_vector_ids with explicit vector IDs instead"
+        )
         return self.delete_records(where={"document_id": document_id}, collection_name=collection_name)
 
     def delete_workflow_vectors(self, workflow_id: int, collection_name: str = "documents") -> dict[str, int]:
+        logger.warning(
+            "delete_workflow_vectors is deprecated; use delete_vector_ids with explicit vector IDs instead"
+        )
         return self.delete_records(where={"workflow_id": workflow_id}, collection_name=collection_name)
 
 
